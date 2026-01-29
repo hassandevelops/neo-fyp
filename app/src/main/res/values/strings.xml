@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Neo</string>
+    
+    <!-- Feed Screen -->
+    <string name="feed_title">Neo Feed</string>
+    <string name="no_posts">No posts yet. Create the first one!</string>
+    <string name="create_post">Create Post</string>
+    <string name="refresh">Refresh</string>
+    
+    <!-- Create Post Screen -->
+    <string name="post_hint">What\'s on your mind?</string>
+    <string name="post_button">Post</string>
+    <string name="cancel">Cancel</string>
+    <string name="author_name_hint">Your name</string>
+    <string name="character_limit">%1$d / %2$d</string>
+    
+    <!-- Settings Screen -->
+    <string name="settings_title">Settings</string>
+    <string name="device_id">Device ID</string>
+    <string name="display_name">Display Name</string>
+    <string name="connected_peers">Connected Peers</string>
+    <string name="no_peers">No peers connected</string>
+    <string name="clear_old_posts">Clear Old Posts</string>
+    <string name="export_data">Export Data</string>
+    <string name="import_data">Import Data</string>
+    
+    <!-- Bluetooth Service -->
+    <string name="bluetooth_service_title">Neo is running</string>
+    <string name="bluetooth_service_description">Syncing posts with nearby devices</string>
+    <string name="peers_connected">%1$d peers connected</string>
+    
+    <!-- Permissions -->
+    <string name="bluetooth_permission_required">Bluetooth permission is required to connect with nearby devices</string>
+    <string name="location_permission_required">Location permission is required for Bluetooth scanning</string>
+    <string name="notification_permission_required">Notification permission is required for background sync</string>
+    
+    <!-- Errors -->
+    <string name="error_post_too_long">Post is too long</string>
+    <string name="error_post_empty">Post cannot be empty</string>
+    <string name="error_name_required">Please enter your name</string>
+    <string name="error_bluetooth_unavailable">Bluetooth is not available on this device</string>
+    <string name="error_generic">Something went wrong</string>
+</resources>
