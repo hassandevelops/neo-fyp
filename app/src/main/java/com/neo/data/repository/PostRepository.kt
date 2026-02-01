@@ -59,9 +59,14 @@ class PostRepository @Inject constructor(
     
     /**
      * Delete posts older than the specified timestamp.
+     * Optionally exclude posts from a specific author.
      */
-    suspend fun deleteOldPosts(beforeTimestamp: Long): Int {
-        return postDao.deleteOldPosts(beforeTimestamp)
+    suspend fun deleteOldPosts(beforeTimestamp: Long, excludeAuthorId: String? = null): Int {
+        return if (excludeAuthorId != null) {
+            postDao.deleteOldPostsExcludingAuthor(beforeTimestamp, excludeAuthorId)
+        } else {
+            postDao.deleteOldPosts(beforeTimestamp)
+        }
     }
     
     /**
@@ -69,5 +74,12 @@ class PostRepository @Inject constructor(
      */
     suspend fun getPostCount(): Int {
         return postDao.getPostCount()
+    }
+    
+    /**
+     * Update an existing post.
+     */
+    suspend fun updatePost(post: Post) {
+        postDao.update(post)
     }
 }

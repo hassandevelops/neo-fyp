@@ -56,6 +56,13 @@ interface PostDao {
     suspend fun deleteOldPosts(beforeTimestamp: Long): Int
     
     /**
+     * Delete posts older than a specific timestamp, excluding posts from a specific author.
+     * Used for cleanup while preserving user's own posts.
+     */
+    @Query("DELETE FROM posts WHERE timestamp < :beforeTimestamp AND authorId != :excludeAuthorId")
+    suspend fun deleteOldPostsExcludingAuthor(beforeTimestamp: Long, excludeAuthorId: String): Int
+    
+    /**
      * Get total post count.
      */
     @Query("SELECT COUNT(*) FROM posts")
@@ -66,4 +73,10 @@ interface PostDao {
      */
     @Query("DELETE FROM posts")
     suspend fun deleteAll()
+    
+    /**
+     * Update an existing post.
+     */
+    @Update
+    suspend fun update(post: Post)
 }

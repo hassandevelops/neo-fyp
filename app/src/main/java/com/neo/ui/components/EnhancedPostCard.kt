@@ -35,6 +35,7 @@ fun EnhancedPostCard(
     onPostClick: () -> Unit,
     onLikeClick: () -> Unit,
     onCommentClick: () -> Unit,
+    commentCount: Int = 0,
     modifier: Modifier = Modifier
 ) {
     var liked by remember { mutableStateOf(false) }
@@ -149,7 +150,9 @@ fun EnhancedPostCard(
                         )
                 ) {
                     Image(
-                        painter = rememberAsyncImagePainter(post.imageUri),
+                        painter = rememberAsyncImagePainter(
+                            model = java.io.File(post.imageUri)
+                        ),
                         contentDescription = "Post image",
                         modifier = Modifier
                             .fillMaxWidth()
@@ -205,7 +208,7 @@ fun EnhancedPostCard(
                             modifier = Modifier.size(24.dp)
                         )
                         Text(
-                            text = "0",
+                            text = commentCount.toString(),
                             color = TextWhite80,
                             fontSize = 14.sp
                         )

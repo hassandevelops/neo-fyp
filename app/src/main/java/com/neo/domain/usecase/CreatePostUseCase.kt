@@ -1,9 +1,14 @@
 package com.neo.domain.usecase
 
+import android.content.Context
+import android.net.Uri
 import com.neo.data.model.Post
 import com.neo.data.repository.PostRepository
+import com.neo.media.ImageCompressor
 import com.neo.security.CryptoManager
+import com.neo.security.RateLimiter
 import com.neo.sync.GossipProtocol
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.UUID
 import javax.inject.Inject
 
@@ -11,9 +16,11 @@ import javax.inject.Inject
  * Use case for creating a new post.
  */
 class CreatePostUseCase @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val postRepository: PostRepository,
     private val cryptoManager: CryptoManager,
-    private val gossipProtocol: GossipProtocol
+    private val gossipProtocol: GossipProtocol,
+    private val rateLimiter: RateLimiter
 ) {
     
     companion object {
@@ -34,6 +41,20 @@ class CreatePostUseCase @Inject constructor(
         imageUri: String? = null
     ): Result<Post> {
         return try {
+            // Get device ID first for rate limiting
+            val deviceId = cryptoManager.getDeviceId()
+            
+            // Check rate limit
+            if (!rateLimiter.canCreatePost(deviceId)) {
+                val timeUntil = rateLimiter.getTimeUntilNextPost(deviceId)
+                val minutesUntil = (timeUntil / 60000).toInt()
+                return Result.failure(
+                    IllegalStateException(
+                        "Rate limit exceeded. Please wait $minutesUntil minutes before posting again."
+                    )
+                )
+            }
+            
             // Validate input
             if (content.isBlank()) {
                 return Result.failure(IllegalArgumentException("Content cannot be empty"))
@@ -45,8 +66,18 @@ class CreatePostUseCase @Inject constructor(
                 return Result.failure(IllegalArgumentException("Content exceeds maximum length"))
             }
             
-            // Get device ID and keys
-            val deviceId = cryptoManager.getDeviceId()
+            // Compress image if provided
+            var compressedImage: ImageCompressor.CompressedImage? = null
+            if (imageUri != null) {
+                val imageCompressor = ImageCompressor(context)
+                compressedImage = imageCompressor.compressImage(Uri.parse(imageUri))
+                
+                if (compressedImage == null) {
+                    return Result.failure(IllegalArgumentException("Failed to compress image"))
+                }
+            }
+            
+            // Get public key
             val publicKey = cryptoManager.getPublicKey()
             
             // Create message for signing
@@ -69,6 +100,11 @@ class CreatePostUseCase @Inject constructor(
                 authorName = authorName,
                 content = content,
                 imageUri = imageUri,
+                imageData = compressedImage?.data,
+                imageHash = compressedImage?.hash,
+                imageSize = compressedImage?.sizeBytes,
+                imageWidth = compressedImage?.width,
+                imageHeight = compressedImage?.height,
                 timestamp = timestamp,
                 signature = signature,
                 publicKey = publicKey,

@@ -15,6 +15,10 @@ object MessageProtocol {
     private const val TYPE_SYNC_REQUEST = "sync_request"
     private const val TYPE_SYNC_RESPONSE = "sync_response"
     private const val TYPE_ACK = "ack"
+    private const val TYPE_IMAGE_METADATA = "image_metadata"
+    private const val TYPE_IMAGE_CHUNK = "image_chunk"
+    private const val TYPE_COMMENT_BROADCAST = "comment_broadcast"
+    private const val TYPE_REACTION_BROADCAST = "reaction_broadcast"
     
     /**
      * Serialize a message to JSON string.
@@ -51,6 +55,50 @@ object MessageProtocol {
             is Message.Ack -> {
                 json.addProperty("type", TYPE_ACK)
                 json.addProperty("messageId", message.messageId)
+                json.addProperty("messageType", message.messageType)
+                json.addProperty("success", message.success)
+            }
+            is Message.ImageMetadata -> {
+                json.addProperty("type", TYPE_IMAGE_METADATA)
+                json.addProperty("postId", message.postId)
+                json.addProperty("imageHash", message.imageHash)
+                json.addProperty("totalSize", message.totalSize)
+                json.addProperty("totalChunks", message.totalChunks)
+                json.addProperty("width", message.width)
+                json.addProperty("height", message.height)
+            }
+            is Message.ImageChunk -> {
+                json.addProperty("type", TYPE_IMAGE_CHUNK)
+                json.addProperty("postId", message.postId)
+                json.addProperty("chunkIndex", message.chunkIndex)
+                json.addProperty("totalChunks", message.totalChunks)
+                json.addProperty("data", message.data)
+                json.addProperty("checksum", message.checksum)
+            }
+            is Message.CommentBroadcast -> {
+                json.addProperty("type", TYPE_COMMENT_BROADCAST)
+                json.addProperty("id", message.id)
+                json.addProperty("postId", message.postId)
+                json.addProperty("parentCommentId", message.parentCommentId)
+                json.addProperty("authorId", message.authorId)
+                json.addProperty("authorName", message.authorName)
+                json.addProperty("content", message.content)
+                json.addProperty("timestamp", message.timestamp)
+                json.addProperty("signature", message.signature)
+                json.addProperty("publicKey", message.publicKey)
+                json.addProperty("ttl", message.ttl)
+            }
+            is Message.ReactionBroadcast -> {
+                json.addProperty("type", TYPE_REACTION_BROADCAST)
+                json.addProperty("id", message.id)
+                json.addProperty("postId", message.postId)
+                json.addProperty("userId", message.userId)
+                json.addProperty("userName", message.userName)
+                json.addProperty("type_value", message.type)
+                json.addProperty("timestamp", message.timestamp)
+                json.addProperty("signature", message.signature)
+                json.addProperty("publicKey", message.publicKey)
+                json.addProperty("ttl", message.ttl)
             }
         }
         
@@ -99,11 +147,59 @@ object MessageProtocol {
                 }
                 TYPE_ACK -> {
                     Message.Ack(
-                        messageId = json.get("messageId").asString
+                        messageId = json.get("messageId").asString,
+                        messageType = json.get("messageType")?.asString ?: "unknown",
+                        success = json.get("success")?.asBoolean ?: true
                     )
                 }
-                else -> null
+                TYPE_IMAGE_METADATA -> {
+                    Message.ImageMetadata(
+                        postId = json.get("postId").asString,
+                        imageHash = json.get("imageHash").asString,
+                        totalSize = json.get("totalSize").asInt,
+                        totalChunks = json.get("totalChunks").asInt,
+                        width = json.get("width").asInt,
+                        height = json.get("height").asInt
+                    )
+                }
+                TYPE_IMAGE_CHUNK -> {
+                Message.ImageChunk(
+                    postId = json.get("postId").asString,
+                    chunkIndex = json.get("chunkIndex").asInt,
+                    totalChunks = json.get("totalChunks").asInt,
+                    data = json.get("data").asString,
+                    checksum = json.get("checksum").asString
+                )
             }
+            TYPE_COMMENT_BROADCAST -> {
+                Message.CommentBroadcast(
+                    id = json.get("id").asString,
+                    postId = json.get("postId").asString,
+                    parentCommentId = json.get("parentCommentId")?.asString,
+                    authorId = json.get("authorId").asString,
+                    authorName = json.get("authorName").asString,
+                    content = json.get("content").asString,
+                    timestamp = json.get("timestamp").asLong,
+                    signature = json.get("signature").asString,
+                    publicKey = json.get("publicKey").asString,
+                    ttl = json.get("ttl").asInt
+                )
+            }
+            TYPE_REACTION_BROADCAST -> {
+                Message.ReactionBroadcast(
+                    id = json.get("id").asString,
+                    postId = json.get("postId").asString,
+                    userId = json.get("userId").asString,
+                    userName = json.get("userName").asString,
+                    type = json.get("type_value").asString,
+                    timestamp = json.get("timestamp").asLong,
+                    signature = json.get("signature").asString,
+                    publicKey = json.get("publicKey").asString,
+                    ttl = json.get("ttl").asInt
+                )
+            }
+            else -> throw IllegalArgumentException("Unknown message type: $type")
+        }
         } catch (e: Exception) {
             null
         }
