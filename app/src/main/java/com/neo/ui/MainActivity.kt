@@ -28,6 +28,11 @@ import dagger.hilt.android.AndroidEntryPoint
 /**
  * Main activity for Neo app.
  */
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+
+/**
+ * Main activity for Neo app.
+ */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     
@@ -62,6 +67,19 @@ class MainActivity : ComponentActivity() {
     }
     
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Handle the splash screen transition.
+        // Handle the splash screen transition.
+        var keepSplashOnScreen = true
+        val delay = 1500L
+        
+        installSplashScreen().setKeepOnScreenCondition { 
+            keepSplashOnScreen 
+        }
+        
+        // Remove splash after delay
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            keepSplashOnScreen = false
+        }, delay)
         super.onCreate(savedInstanceState)
         
         setContent {

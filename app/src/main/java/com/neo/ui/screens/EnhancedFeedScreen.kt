@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,6 +44,10 @@ fun EnhancedFeedScreen(
     val posts by viewModel.posts.collectAsState()
     val connectedPeersCount by viewModel.connectedPeersCount.collectAsState()
     
+    // State for comments
+    var selectedPostForComments by remember { mutableStateOf<Post?>(null) }
+    val comments = remember { mutableStateListOf<com.neo.data.model.Comment>() }
+    
     Box(modifier = modifier.fillMaxSize()) {
         GradientBackground {
             Column(modifier = Modifier.fillMaxSize()) {
@@ -52,7 +57,7 @@ fun EnhancedFeedScreen(
                     onSearchClick = onNavigateToSearch,
                     onNotificationsClick = onNavigateToNotifications,
                     onSettingsClick = onNavigateToSettings,
-                    notificationCount = 3
+                    notificationCount = 0
                 )
                 
                 // Content
@@ -75,7 +80,7 @@ fun EnhancedFeedScreen(
                             post = post,
                             onPostClick = { onNavigateToPostDetail(post) },
                             onLikeClick = { /* Handle like */ },
-                            onCommentClick = { onNavigateToPostDetail(post) }
+                            onCommentClick = { selectedPostForComments = post }
                         )
                     }
                 }
@@ -97,6 +102,33 @@ fun EnhancedFeedScreen(
                 modifier = Modifier.size(24.dp)
             )
         }
+    }
+    
+    // Comments Bottom Sheet
+    selectedPostForComments?.let { post ->
+        CommentsBottomSheet(
+            postId = post.id,
+            topLevelComments = comments.filter { it.parentCommentId == null && it.postId == post.id },
+            getReplies = { parentId -> comments.filter { it.parentCommentId == parentId } },
+            onDismiss = { selectedPostForComments = null },
+            onCommentSubmit = { content, parentCommentId ->
+                // Add comment to mock list
+                val newComment = com.neo.data.model.Comment(
+                    id = "comment_${System.currentTimeMillis()}",
+                    postId = post.id,
+                    authorId = "mock_user_id",
+                    authorName = "Current User",
+                    content = content,
+                    timestamp = System.currentTimeMillis(),
+                    signature = "mock_signature",
+                    publicKey = "mock_public_key",
+                    ttl = 10,
+                    firstSeenTimestamp = System.currentTimeMillis(),
+                    parentCommentId = parentCommentId
+                )
+                comments.add(newComment)
+            }
+        )
     }
 }
 

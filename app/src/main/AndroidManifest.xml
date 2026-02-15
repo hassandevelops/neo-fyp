@@ -26,10 +26,10 @@
     <!-- Bluetooth hardware requirement -->
     <uses-feature 
         android:name="android.hardware.bluetooth" 
-        android:required="true" />
+        android:required="false" />
     <uses-feature 
         android:name="android.hardware.bluetooth_le" 
-        android:required="true" />
+        android:required="false" />
 
     <application
         android:name=".NeoApplication"
@@ -47,7 +47,7 @@
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.Neo">
+            android:theme="@style/Theme.App.Starting">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

@@ -84,6 +84,7 @@ fun EnhancedCreatePostScreen(
                         onClick = {
                             if (content.isNotBlank() && authorName.isNotBlank()) {
                                 onPostClick(content, authorName, selectedImageUri?.toString())
+                                onDismiss() // Close modal after successful post
                             }
                         },
                         enabled = content.isNotBlank() && authorName.isNotBlank(),

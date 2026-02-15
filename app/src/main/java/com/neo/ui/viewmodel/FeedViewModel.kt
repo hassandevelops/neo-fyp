@@ -65,6 +65,18 @@ class FeedViewModel @Inject constructor(
         data class Success(val message: String) : UiState()
     }
     
+    // Profile state
+    private val _profileName = MutableStateFlow("Neo User")
+    val profileName: StateFlow<String> = _profileName.asStateFlow()
+    
+    private val _profileBio = MutableStateFlow("Decentralized social media enthusiast")
+    val profileBio: StateFlow<String> = _profileBio.asStateFlow()
+    
+    fun updateProfile(name: String, bio: String) {
+        _profileName.value = name
+        _profileBio.value = bio
+    }
+    
     /**
      * Set the Bluetooth service and start listening for updates.
      */

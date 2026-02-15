@@ -1,5 +1,7 @@
 package com.neo.ui.components
 
+import android.content.Context
+import android.content.Intent
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -19,6 +21,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -38,6 +41,7 @@ fun EnhancedPostCard(
     commentCount: Int = 0,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var liked by remember { mutableStateOf(false) }
     var saved by remember { mutableStateOf(false) }
     var likes by remember { mutableStateOf(0) }
@@ -215,7 +219,12 @@ fun EnhancedPostCard(
                     }
                     
                     // Share button
-                    IconButton(onClick = { /* Share */ }) {
+                    // Share button
+                    Box(
+                        modifier = Modifier
+                            .clickable { sharePost(context, post) },
+                        contentAlignment = Alignment.Center
+                    ) {
                         Icon(
                             imageVector = Icons.Default.Share,
                             contentDescription = "Share",
@@ -223,6 +232,7 @@ fun EnhancedPostCard(
                             modifier = Modifier.size(24.dp)
                         )
                     }
+                    
                 }
                 
                 // Bookmark button
@@ -253,4 +263,17 @@ private fun formatTimestamp(timestamp: Long): String {
         minutes > 0 -> "${minutes}m ago"
         else -> "Just now"
     }
+}
+
+/**
+ * Share post content using Android's native share dialog
+ */
+private fun sharePost(context: Context, post: Post) {
+    val shareIntent = Intent().apply {
+        action = Intent.ACTION_SEND
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, "Check out this post by ${post.authorName}:\n\n${post.content}")
+        putExtra(Intent.EXTRA_SUBJECT, "Neo Post")
+    }
+    context.startActivity(Intent.createChooser(shareIntent, "Share post via"))
 }

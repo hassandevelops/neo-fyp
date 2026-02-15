@@ -24,15 +24,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neo.ui.components.GradientBackground
 import com.neo.ui.theme.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 
 /**
  * Profile Screen with animated stats and post grid
  */
 @Composable
 fun ProfileScreen(
+    viewModel: com.neo.ui.viewmodel.FeedViewModel,
     onBack: () -> Unit,
+    onEditProfile: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val profileName by viewModel.profileName.collectAsState()
+    val profileBio by viewModel.profileBio.collectAsState()
     GradientBackground(modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize()) {
             // Header
@@ -130,7 +135,7 @@ fun ProfileScreen(
                             
                             // Name
                             Text(
-                                text = "Neo User",
+                                text = profileName,
                                 color = TextWhite,
                                 fontSize = 24.sp,
                                 fontWeight = FontWeight.Bold
@@ -145,7 +150,7 @@ fun ProfileScreen(
                             Spacer(modifier = Modifier.height(8.dp))
                             
                             Text(
-                                text = "Decentralized social networking enthusiast",
+                                text = profileBio,
                                 color = TextWhite60,
                                 fontSize = 14.sp,
                                 modifier = Modifier.padding(horizontal = 16.dp)
@@ -178,7 +183,7 @@ fun ProfileScreen(
                 
                 // Edit Profile Button
                 Button(
-                    onClick = { /* Edit profile */ },
+                    onClick = onEditProfile,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(
@@ -207,12 +212,14 @@ fun ProfileScreen(
                     containerColor = androidx.compose.ui.graphics.Color.Transparent,
                     contentColor = NeoLime,
                     indicator = { tabPositions ->
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .height(2.dp)
-                                .background(NeoLime)
-                        )
+                        if (tabPositions.isNotEmpty()) {
+                            Box(
+                                Modifier
+                                    .tabIndicatorOffset(tabPositions[selectedTab])
+                                    .height(2.dp)
+                                    .background(NeoLime)
+                            )
+                        }
                     }
                 ) {
                     Tab(

@@ -50,23 +50,13 @@ fun EnhancedHeader(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.neo.R.drawable.logo),
+                    contentDescription = "NEO Logo",
                     modifier = Modifier
                         .size(40.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(
-                            brush = Brush.linearGradient(
-                                colors = listOf(NeoPurple, NeoOrange, NeoTeal)
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "✦",
-                        color = TextWhite,
-                        fontSize = 20.sp
-                    )
-                }
+                )
                 
                 Text(
                     text = "NEO",
@@ -97,44 +87,20 @@ fun EnhancedHeader(
                 }
                 
                 // Notifications
-                Box {
-                    IconButton(
-                        onClick = onNotificationsClick,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(SurfaceWhite5, CircleShape)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Notifications,
-                            contentDescription = "Notifications",
-                            tint = TextWhite60,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    
-                    if (notificationCount > 0) {
-                        Box(
-                            modifier = Modifier
-                                .offset(x = 24.dp, y = (-4).dp)
-                                .size(20.dp)
-                                .background(
-                                    brush = Brush.linearGradient(
-                                        colors = listOf(NeoOrange, Color(0xFFEF4444))
-                                    ),
-                                    shape = CircleShape
-                                )
-                                .border(2.dp, NeoBlack, CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = if (notificationCount > 9) "9+" else notificationCount.toString(),
-                                color = TextWhite,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
+                IconButton(
+                    onClick = onNotificationsClick,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(SurfaceWhite5, CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Notifications,
+                        contentDescription = "Notifications",
+                        tint = TextWhite60,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
+
                 
                 // Settings
                 IconButton(

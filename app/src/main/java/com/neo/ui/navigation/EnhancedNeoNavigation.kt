@@ -100,9 +100,14 @@ fun EnhancedNeoNavigation(
             EnhancedCreatePostScreen(
                 onPostClick = { content, authorName, imageUri ->
                     viewModel.createPost(content, authorName, imageUri)
+                    navController.navigate("feed") {
+                        popUpTo("feed") { inclusive = true }
+                    }
                 },
                 onDismiss = {
-                    navController.popBackStack()
+                    navController.navigate("feed") {
+                        popUpTo("feed") { inclusive = true }
+                    }
                 }
             )
         }
@@ -110,7 +115,25 @@ fun EnhancedNeoNavigation(
         // Profile
         composable("profile") {
             ProfileScreen(
-                onBack = { navController.popBackStack() }
+                viewModel = viewModel,
+                onBack = { navController.popBackStack() },
+                onEditProfile = { navController.navigate("edit_profile") }
+            )
+        }
+        
+        // Edit Profile
+        composable("edit_profile") {
+            val currentName by viewModel.profileName.collectAsState()
+            val currentBio by viewModel.profileBio.collectAsState()
+            
+            EditProfileScreen(
+                currentName = currentName,
+                currentBio = currentBio,
+                onSave = { name, bio ->
+                    viewModel.updateProfile(name, bio)
+                    navController.popBackStack()
+                },
+                onCancel = { navController.popBackStack() }
             )
         }
         
