@@ -1,0 +1,97 @@
+package com.neo.ui.viewmodel
+
+import com.neo.data.model.Post
+import com.neo.domain.port.ISyncPort
+import com.neo.domain.usecase.GetFeedUseCase
+import io.mockk.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.*
+import org.junit.After
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+
+@OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+class FeedViewModelTest {
+
+    private val getFeedUseCase: GetFeedUseCase = mockk()
+    private val syncPort: ISyncPort = mockk()
+    private val testDispatcher = StandardTestDispatcher()
+
+    private lateinit var viewModel: FeedViewModel
+
+    @Before
+    fun setup() {
+        Dispatchers.setMain(testDispatcher)
+        MockKAnnotations.init(this)
+    }
+
+    @After
+    fun teardown() {
+        Dispatchers.resetMain()
+    }
+
+    @Test
+    fun `posts are collected from use case`() = runTest(testDispatcher) {
+        val posts = listOf(
+            Post(id = "1", authorId = "a1", authorName = "Alice", content = "Hello", timestamp = 1000L, signature = "sig1", publicKey = "pk1", firstSeenTimestamp = 1000L)
+        )
+        every { getFeedUseCase.execute() } returns flowOf(posts)
+        every { getFeedUseCase.executePaged() } returns flowOf()
+        every { syncPort.connectedPeersCount } returns MutableStateFlow(0)
+
+        viewModel = FeedViewModel(mockk(relaxed = true), getFeedUseCase, syncPort)
+        backgroundScope.launch(testDispatcher) { viewModel.posts.collect { } }
+        advanceUntilIdle()
+
+        assertEquals(1, viewModel.posts.value.size)
+        assertEquals("Hello", viewModel.posts.value[0].content)
+    }
+
+    @Test
+    fun `empty feed emits empty list`() = runTest(testDispatcher) {
+        every { getFeedUseCase.execute() } returns flowOf(emptyList())
+        every { getFeedUseCase.executePaged() } returns flowOf()
+        every { syncPort.connectedPeersCount } returns MutableStateFlow(0)
+
+        viewModel = FeedViewModel(mockk(relaxed = true), getFeedUseCase, syncPort)
+        backgroundScope.launch(testDispatcher) { viewModel.posts.collect { } }
+        advanceUntilIdle()
+
+        assertTrue(viewModel.posts.value.isEmpty())
+    }
+
+    @Test
+    fun `connected peers count reflects sync port`() = runTest(testDispatcher) {
+        val peersCount = MutableStateFlow(5)
+        every { getFeedUseCase.execute() } returns flowOf(emptyList())
+        every { getFeedUseCase.executePaged() } returns flowOf()
+        every { syncPort.connectedPeersCount } returns peersCount
+
+        viewModel = FeedViewModel(mockk(relaxed = true), getFeedUseCase, syncPort)
+        backgroundScope.launch(testDispatcher) { viewModel.connectedPeersCount.collect { } }
+        advanceUntilIdle()
+
+        assertEquals(5, viewModel.connectedPeersCount.value)
+    }
+
+    @Test
+    fun `paged posts delegates to use case`() = runTest(testDispatcher) {
+        every { getFeedUseCase.execute() } returns flowOf(emptyList())
+        every { getFeedUseCase.executePaged() } returns flowOf()
+        every { syncPort.connectedPeersCount } returns MutableStateFlow(0)
+
+        viewModel = FeedViewModel(mockk(relaxed = true), getFeedUseCase, syncPort)
+        advanceUntilIdle()
+
+        assertNotNull(viewModel.pagedPosts)
+        verify { getFeedUseCase.executePaged() }
+    }
+}

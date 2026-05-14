@@ -22,8 +22,6 @@ data class Post(
     val authorId: String,              // Device/User UUID who created this post
     val authorName: String,            // Display name of the author
     val content: String,               // Post text content
-    val imageUri: String? = null,      // Optional local image URI (for own posts)
-    val imageData: String? = null,     // Base64 encoded compressed image data (for transmission)
     val imageHash: String? = null,     // SHA-256 hash of image data for verification
     val imageSize: Int? = null,        // Size of compressed image in bytes
     val imageWidth: Int? = null,       // Image width in pixels

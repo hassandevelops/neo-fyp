@@ -6,7 +6,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -14,15 +13,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neo.ui.theme.*
 
 /**
- * Enhanced header with gradient logo and action buttons
+ * App header — profile avatar on left, "Neo" wordmark, bell on right.
+ * Pure black background matching the design samples.
  */
 @Composable
 fun EnhancedHeader(
@@ -33,105 +32,80 @@ fun EnhancedHeader(
     notificationCount: Int = 0,
     modifier: Modifier = Modifier
 ) {
+    val infiniteTransition = rememberInfiniteTransition(label = "badge")
+    val badgeAlpha by infiniteTransition.animateFloat(
+        initialValue = 1f, targetValue = 0.4f,
+        animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse),
+        label = "badge_alpha"
+    )
+
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = NeoBlack.copy(alpha = 0.5f),
+        color = NeoBlack,
         tonalElevation = 0.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(horizontal = 16.dp, vertical = 14.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Logo
+            // ── Left: Avatar + wordmark ──────────────────────────────────
             Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                androidx.compose.foundation.Image(
-                    painter = androidx.compose.ui.res.painterResource(id = com.neo.R.drawable.logo),
-                    contentDescription = "NEO Logo",
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                )
-                
-                Text(
-                    text = "NEO",
-                    color = TextWhite,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 2.sp
-                )
-            }
-            
-            // Action buttons
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // Search
-                IconButton(
-                    onClick = onSearchClick,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(SurfaceWhite5, CircleShape)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = "Search",
-                        tint = TextWhite60,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                
-                // Notifications
-                IconButton(
-                    onClick = onNotificationsClick,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(SurfaceWhite5, CircleShape)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Notifications,
-                        contentDescription = "Notifications",
-                        tint = TextWhite60,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-
-                
-                // Settings
-                IconButton(
-                    onClick = onSettingsClick,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(SurfaceWhite5, CircleShape)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Settings",
-                        tint = TextWhite60,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                
-                // Profile
+                // Profile avatar circle — lime ring
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(36.dp)
                         .clip(CircleShape)
-                        .border(2.dp, NeoLime.copy(alpha = 0.5f), CircleShape)
-                        .clickable(onClick = onProfileClick)
-                        .background(SurfaceWhite10, CircleShape),
+                        .border(2.dp, NeoLime, CircleShape)
+                        .background(NeoGray900, CircleShape)
+                        .clickable(onClick = onProfileClick),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Person,
                         contentDescription = "Profile",
-                        tint = NeoLime,
+                        tint = TextWhite60,
                         modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Text(
+                    text = "Neo",
+                    color = TextWhite,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+            }
+
+            // ── Right: Bell ──────────────────────────────────────────────
+            Box {
+                IconButton(
+                    onClick = onNotificationsClick,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.NotificationsNone,
+                        contentDescription = "Notifications",
+                        tint = TextWhite,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                // Pulsing red dot badge
+                if (notificationCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 6.dp, end = 6.dp)
+                            .size(8.dp)
+                            .graphicsLayer { alpha = badgeAlpha }
+                            .background(NeoRed, CircleShape)
                     )
                 }
             }

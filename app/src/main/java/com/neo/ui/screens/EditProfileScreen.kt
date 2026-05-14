@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neo.ui.components.GradientBackground
 import com.neo.ui.theme.*
+import androidx.compose.material3.MaterialTheme
 
 /**
  * Edit Profile Screen for updating user information
@@ -97,7 +98,7 @@ fun EditProfileScreen(
                         .clip(CircleShape)
                         .background(
                             brush = Brush.linearGradient(
-                                colors = listOf(NeoPurple, NeoPink, NeoOrange)
+                                colors = listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.error)
                             )
                         ),
                     contentAlignment = Alignment.Center
@@ -112,7 +113,7 @@ fun EditProfileScreen(
                 
                 Text(
                     text = "Change Photo",
-                    color = NeoCyan,
+                    color = MaterialTheme.colorScheme.secondary,
                     fontSize = 14.sp,
                     modifier = Modifier.align(Alignment.CenterHorizontally)
                 )

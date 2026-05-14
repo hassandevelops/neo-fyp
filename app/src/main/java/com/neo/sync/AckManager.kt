@@ -2,7 +2,12 @@ package com.neo.sync
 
 import android.util.Log
 import com.neo.bluetooth.Message
-import kotlinx.coroutines.*
+import com.neo.di.ApplicationScope
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -12,15 +17,17 @@ import javax.inject.Singleton
  * Implements exponential backoff for retries.
  */
 @Singleton
-class AckManager @Inject constructor() {
-    
+class AckManager @Inject constructor(
+    @ApplicationScope private val scope: CoroutineScope
+) {
+
     companion object {
         private const val TAG = "AckManager"
         private const val MAX_RETRIES = 3
         private const val INITIAL_TIMEOUT_MS = 1000L // 1 second
         private const val MAX_TIMEOUT_MS = 8000L // 8 seconds
     }
-    
+
     /**
      * Represents a pending message awaiting acknowledgment.
      */
@@ -35,12 +42,9 @@ class AckManager @Inject constructor() {
         var timeoutMs: Long = INITIAL_TIMEOUT_MS,
         var job: Job? = null
     )
-    
+
     // Map of messageId to pending message
     private val pendingMessages = ConcurrentHashMap<String, PendingMessage>()
-    
-    // Coroutine scope for managing retry jobs
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
     /**
      * Send a message and track it for acknowledgment.

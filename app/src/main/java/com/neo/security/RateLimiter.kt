@@ -11,19 +11,27 @@ import javax.inject.Singleton
  */
 @Singleton
 class RateLimiter @Inject constructor() {
-    
+
     companion object {
         private const val TAG = "RateLimiter"
         private const val DEFAULT_POST_LIMIT = 10 // posts per hour
         private const val DEFAULT_COMMENT_LIMIT = 20 // comments per hour
         private const val DEFAULT_WINDOW_MS = 3600000L // 1 hour
         private const val CLEANUP_THRESHOLD = 100 // Cleanup when map exceeds this size
+
+        // Inbound rate limits (from TRD.md)
+        private const val INBOUND_POST_LIMIT = 30 // posts per hour from single peer
+        private const val INBOUND_COMMENT_LIMIT = 20 // comments per hour from single peer
     }
     
-    // Map of deviceId to list of timestamps    
+    // Map of deviceId to list of timestamps
     // Separate tracking for posts and comments
     private val postTimestamps = ConcurrentHashMap<String, MutableList<Long>>()
     private val commentTimestamps = ConcurrentHashMap<String, MutableList<Long>>()
+
+    // Inbound rate limiting - track received messages from peers
+    private val inboundPostTimestamps = ConcurrentHashMap<String, MutableList<Long>>()
+    private val inboundCommentTimestamps = ConcurrentHashMap<String, MutableList<Long>>()
     
     private var postLimit = DEFAULT_POST_LIMIT
     private var commentLimit = DEFAULT_COMMENT_LIMIT
@@ -224,5 +232,53 @@ class RateLimiter @Inject constructor() {
      */
     fun getConfig(): Triple<Int, Int, Long> {
         return Triple(postLimit, commentLimit, windowMs)
+    }
+
+    /**
+     * Check if an inbound post from an author should be accepted.
+     * Returns true if under limit, false if over limit (should be dropped).
+     */
+    fun canAcceptInboundPost(authorId: String): Boolean {
+        val now = System.currentTimeMillis()
+        val timestamps = inboundPostTimestamps.getOrPut(authorId) { mutableListOf() }
+
+        timestamps.removeAll { it < now - windowMs }
+
+        val allowed = timestamps.size < INBOUND_POST_LIMIT
+        if (allowed) {
+            timestamps.add(now)
+        } else {
+            Log.w(TAG, "Inbound post rate limit exceeded for $authorId (${timestamps.size}/$INBOUND_POST_LIMIT)")
+        }
+
+        return allowed
+    }
+
+    /**
+     * Check if an inbound comment from an author should be accepted.
+     * Returns true if under limit, false if over limit (should be dropped).
+     */
+    fun canAcceptInboundComment(authorId: String): Boolean {
+        val now = System.currentTimeMillis()
+        val timestamps = inboundCommentTimestamps.getOrPut(authorId) { mutableListOf() }
+
+        timestamps.removeAll { it < now - windowMs }
+
+        val allowed = timestamps.size < INBOUND_COMMENT_LIMIT
+        if (allowed) {
+            timestamps.add(now)
+        } else {
+            Log.w(TAG, "Inbound comment rate limit exceeded for $authorId (${timestamps.size}/$INBOUND_COMMENT_LIMIT)")
+        }
+
+        return allowed
+    }
+
+    /**
+     * Check if an inbound reaction from an author should be accepted.
+     * Uses the same limit as comments since they're similar in nature.
+     */
+    fun canAcceptInboundReaction(authorId: String): Boolean {
+        return canAcceptInboundComment(authorId)
     }
 }

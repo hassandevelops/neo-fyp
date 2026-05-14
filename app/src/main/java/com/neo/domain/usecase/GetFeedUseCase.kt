@@ -1,5 +1,6 @@
 package com.neo.domain.usecase
 
+import androidx.paging.PagingData
 import com.neo.data.model.Post
 import com.neo.data.repository.PostRepository
 import kotlinx.coroutines.flow.Flow
@@ -18,5 +19,13 @@ class GetFeedUseCase @Inject constructor(
      */
     fun execute(): Flow<List<Post>> {
         return postRepository.getAllPosts()
+    }
+
+    /**
+     * Get paginated posts for infinite scrolling.
+     * Returns a PagingData flow.
+     */
+    fun executePaged(): Flow<PagingData<Post>> {
+        return postRepository.getPostsPaged()
     }
 }

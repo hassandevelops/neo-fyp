@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neo.ui.components.GradientBackground
 import com.neo.ui.theme.*
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 
 /**
@@ -31,13 +32,14 @@ import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
  */
 @Composable
 fun ProfileScreen(
-    viewModel: com.neo.ui.viewmodel.FeedViewModel,
+    viewModel: com.neo.ui.viewmodel.ProfileViewModel,
     onBack: () -> Unit,
     onEditProfile: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val profileName by viewModel.profileName.collectAsState()
     val profileBio by viewModel.profileBio.collectAsState()
+    val deviceId = viewModel.deviceId
     GradientBackground(modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize()) {
             // Header
@@ -99,7 +101,7 @@ fun ProfileScreen(
                                 brush = Brush.linearGradient(
                                     colors = listOf(
                                         NeoLime.copy(alpha = 0.15f),
-                                        NeoYellow.copy(alpha = 0.1f)
+                                        MaterialTheme.colorScheme.tertiary.copy(alpha = 0.1f)
                                     )
                                 )
                             )
@@ -114,20 +116,22 @@ fun ProfileScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            // Avatar
+                            // Avatar with solid NeoLime ring
                             Box(
                                 modifier = Modifier
-                                    .size(96.dp)
+                                    .size(100.dp)
                                     .clip(CircleShape)
-                                    .border(4.dp, NeoLime.copy(alpha = 0.3f), CircleShape)
-                                    .background(SurfaceWhite10, CircleShape),
+                                    .border(3.dp, NeoLime, CircleShape)
+                                    .padding(3.dp)
+                                    .clip(CircleShape)
+                                    .background(NeoGray800, CircleShape),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Person,
                                     contentDescription = "Profile",
-                                    tint = NeoLime,
-                                    modifier = Modifier.size(48.dp)
+                                    tint = TextWhite60,
+                                    modifier = Modifier.size(52.dp)
                                 )
                             }
                             
@@ -159,53 +163,50 @@ fun ProfileScreen(
                     }
                 }
                 
-                // Stats
-                Row(
+                // ── Stats row ───────────────────────────────────────────
+                Card(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = NeoGray900)
                 ) {
-                    StatCard(
-                        label = "Posts",
-                        value = "0",
-                        modifier = Modifier.weight(1f)
-                    )
-                    StatCard(
-                        label = "Peers",
-                        value = "0",
-                        modifier = Modifier.weight(1f)
-                    )
-                    StatCard(
-                        label = "Syncs",
-                        value = "0",
-                        modifier = Modifier.weight(1f)
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 16.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        StatItem(label = "PULSES",     value = "0")
+                        Box(modifier = Modifier.width(1.dp).height(32.dp).background(BorderWhite20))
+                        StatItem(label = "NODES",      value = "0")
+                        Box(modifier = Modifier.width(1.dp).height(32.dp).background(BorderWhite20))
+                        StatItem(label = "FOLLOWERS",  value = "0")
+                    }
                 }
                 
-                // Edit Profile Button
+                // ── Establish Link button ─────────────────────────────────
                 Button(
                     onClick = onEditProfile,
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = SurfaceWhite5
-                    ),
-                    border = BorderStroke(2.dp, NeoLime.copy(alpha = 0.5f))
+                    shape = RoundedCornerShape(50.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = NeoLime)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Edit,
+                        imageVector = Icons.Default.Link,
                         contentDescription = null,
-                        tint = NeoLime,
-                        modifier = Modifier.size(16.dp)
+                        tint = NeoBlack,
+                        modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Edit Profile",
-                        color = TextWhite,
-                        fontSize = 14.sp
+                        text = "Establish Link",
+                        color = NeoBlack,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
                 
-                // Tabs
+                // ── Tabs ─────────────────────────────────────────────────
                 var selectedTab by remember { mutableStateOf(0) }
                 TabRow(
                     selectedTabIndex = selectedTab,
@@ -222,16 +223,12 @@ fun ProfileScreen(
                         }
                     }
                 ) {
-                    Tab(
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
-                        text = { Text("Posts") }
-                    )
-                    Tab(
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
-                        text = { Text("Saved") }
-                    )
+                    Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 },
+                        text = { Text("Posts",        color = if (selectedTab == 0) NeoLime else TextWhite40) })
+                    Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 },
+                        text = { Text("Media",        color = if (selectedTab == 1) NeoLime else TextWhite40) })
+                    Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 },
+                        text = { Text("Mesh Network", color = if (selectedTab == 2) NeoLime else TextWhite40) })
                 }
                 
                 // Empty state
@@ -253,35 +250,17 @@ fun ProfileScreen(
 }
 
 @Composable
-private fun StatCard(
+private fun StatItem(
     label: String,
     value: String,
     modifier: Modifier = Modifier
 ) {
-    Card(
+    Column(
         modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = SurfaceWhite5
-        )
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = value,
-                color = TextWhite,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = label,
-                color = TextWhite40,
-                fontSize = 12.sp
-            )
-        }
+        Text(text = value, color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text(text = label, color = TextWhite40, fontSize = 11.sp, letterSpacing = 0.5.sp)
     }
 }

@@ -1,5 +1,8 @@
 package com.neo.data.repository
 
+import androidx.paging.Pager
+import androidx.paging.PagingConfig
+import androidx.paging.PagingData
 import com.neo.data.dao.PostDao
 import com.neo.data.model.Post
 import kotlinx.coroutines.flow.Flow
@@ -19,6 +22,27 @@ class PostRepository @Inject constructor(
      * Get all posts as a Flow (reactive).
      */
     fun getAllPosts(): Flow<List<Post>> = postDao.getAllPosts()
+
+    /**
+     * Get paginated posts for infinite scrolling.
+     */
+    fun getPostsPaged(): Flow<PagingData<Post>> = Pager(
+        config = PagingConfig(
+            pageSize = PAGE_SIZE,
+            prefetchDistance = PREFETCH_DISTANCE,
+            enablePlaceholders = false,
+            initialLoadSize = INITIAL_LOAD_SIZE
+        ),
+        pagingSourceFactory = { postDao.getPostsPaged() }
+    ).flow
+
+    /**
+     * Get posts with manual pagination.
+     */
+    suspend fun getPostsPaginated(page: Int, pageSize: Int = PAGE_SIZE): List<Post> {
+        val offset = (page - 1) * pageSize
+        return postDao.getPostsPaginated(pageSize, offset)
+    }
     
     /**
      * Insert a new post.
@@ -81,5 +105,11 @@ class PostRepository @Inject constructor(
      */
     suspend fun updatePost(post: Post) {
         postDao.update(post)
+    }
+
+    companion object {
+        const val PAGE_SIZE = 20
+        const val PREFETCH_DISTANCE = 5
+        const val INITIAL_LOAD_SIZE = 40
     }
 }

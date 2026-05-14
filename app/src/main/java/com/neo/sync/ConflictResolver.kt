@@ -40,7 +40,7 @@ class ConflictResolver @Inject constructor() {
         
         // If content is identical, no conflict
         if (existing.content == new.content &&
-            existing.imageData == new.imageData) {
+            existing.imageHash == new.imageHash) {
             Log.d(TAG, "No conflict for post ${existing.id} - content identical")
             return Resolution.KeepExisting(existing)
         }
@@ -75,8 +75,8 @@ class ConflictResolver @Inject constructor() {
     fun isConflict(post1: Post, post2: Post): Boolean {
         if (post1.id != post2.id) return false
         
-        return post1.content != post2.content || 
-               post1.imageData != post2.imageData
+        return post1.content != post2.content ||
+               post1.imageHash != post2.imageHash
     }
     
     /**
@@ -89,12 +89,12 @@ class ConflictResolver @Inject constructor() {
             appendLine("  Timestamp: ${existing.timestamp}")
             appendLine("  Author: ${existing.authorName} (${existing.authorId})")
             appendLine("  Content: ${existing.content}")
-            appendLine("  Has Image: ${existing.imageData != null}")
+            appendLine("  Has Image: ${existing.imageHash != null}")
             appendLine("New Post:")
             appendLine("  Timestamp: ${new.timestamp}")
             appendLine("  Author: ${new.authorName} (${new.authorId})")
             appendLine("  Content: ${new.content}")
-            appendLine("  Has Image: ${new.imageData != null}")
+            appendLine("  Has Image: ${new.imageHash != null}")
         }
     }
 }

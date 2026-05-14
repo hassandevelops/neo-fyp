@@ -15,29 +15,44 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
+// Dark scheme: NeoLime primary, NeoGreen secondary, NeoOrange tertiary
 private val DarkColorScheme = darkColorScheme(
-    primary = NeoPurple,
-    secondary = NeoOrange,
-    tertiary = NeoTeal,
-    background = NeoBlack,
-    surface = NeoGray900,
-    onPrimary = TextWhite,
-    onSecondary = TextWhite,
-    onTertiary = TextWhite,
-    onBackground = TextWhite,
-    onSurface = TextWhite
+    primary          = NeoLime,
+    onPrimary        = NeoBlack,          // dark text on lime
+    secondary        = NeoGreen,
+    onSecondary      = NeoBlack,
+    tertiary         = NeoOrange,
+    onTertiary       = TextWhite,
+    background       = NeoBlack,
+    onBackground     = TextWhite,
+    surface          = NeoGray900,
+    onSurface        = TextWhite,
+    surfaceVariant   = NeoGray800,
+    onSurfaceVariant = TextWhite60,
+    error            = NeoRed,
+    onError          = TextWhite
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = NeoPurple,
-    secondary = NeoOrange,
-    tertiary = NeoTeal
+    primary          = NeoLime,
+    onPrimary        = NeoBlack,
+    secondary        = NeoGreen,
+    onSecondary      = NeoBlack,
+    tertiary         = NeoOrange,
+    onTertiary       = TextWhite,
+    background       = NeoLightBackground,
+    onBackground     = TextBlack,
+    surface          = NeoLightSurface,
+    onSurface        = TextBlack,
+    surfaceVariant   = NeoLightBackground,
+    onSurfaceVariant = TextBlack80,
+    error            = NeoRed,
+    onError          = TextWhite
 )
 
 @Composable
 fun NeoTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
@@ -47,21 +62,21 @@ fun NeoTheme(
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
         darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+        else      -> LightColorScheme
     }
-    
+
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.background.toArgb()
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+            window.statusBarColor = NeoBlack.toArgb()
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false
         }
     }
 
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = Typography,
-        content = content
+        typography  = Typography,
+        content     = content
     )
 }

@@ -5,35 +5,76 @@ import com.neo.bluetooth.BluetoothService
 import com.neo.bluetooth.Message
 import com.neo.data.repository.DeviceRepository
 import com.neo.data.repository.PostRepository
-import kotlinx.coroutines.*
+import com.neo.di.ApplicationScope
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * Manages synchronization with peers.
- * Implements periodic sync requests and anti-entropy mechanisms.
- */
 @Singleton
 class SyncManager @Inject constructor(
     private val postRepository: PostRepository,
     private val deviceRepository: DeviceRepository,
-    private val gossipProtocol: GossipProtocol
+    private val gossipProtocol: GossipProtocol,
+    @ApplicationScope private val scope: CoroutineScope
 ) {
     companion object {
         private const val TAG = "SyncManager"
         private const val SYNC_INTERVAL_MS = 30000L // 30 seconds
     }
-    
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     private var bluetoothService: BluetoothService? = null
     private var syncJob: Job? = null
     private var lastSyncTimestamp = 0L
-    
+
+    private val _connectedPeersCount = MutableStateFlow(0)
+    val connectedPeersCount: StateFlow<Int> = _connectedPeersCount.asStateFlow()
+
+    init {
+        scope.launch {
+            bluetoothService?.let { service ->
+                setupMessageRouting(service)
+            }
+        }
+    }
+
+    private fun setupMessageRouting(service: BluetoothService) {
+        service.onMessageReceived = { peerAddress, message ->
+            scope.launch {
+                when (message) {
+                    is Message.SyncRequest -> {
+                        handleSyncRequest(message, peerAddress)
+                    }
+                    is Message.SyncResponse -> {
+                        handleSyncResponse(message, peerAddress)
+                    }
+                    else -> {}
+                }
+            }
+        }
+    }
+
     /**
      * Set the Bluetooth service and start periodic sync.
      */
     fun setBluetoothService(service: BluetoothService) {
         this.bluetoothService = service
+
+        setupMessageRouting(service)
+        
+        scope.launch {
+            service.connectedPeers.collect { peers ->
+                _connectedPeersCount.value = peers.size
+            }
+        }
+
         startPeriodicSync()
     }
     

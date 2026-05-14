@@ -23,11 +23,14 @@ import com.neo.data.model.Post
 import com.neo.ui.components.CommentsBottomSheet
 import com.neo.ui.components.GradientBackground
 import com.neo.ui.theme.*
+import androidx.compose.material3.MaterialTheme
+import com.neo.ui.viewmodel.PostDetailViewModel
 import kotlinx.coroutines.launch
 
 @Composable
 fun PostDetailScreen(
     post: Post,
+    viewModel: PostDetailViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -35,8 +38,25 @@ fun PostDetailScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var commentText by remember { mutableStateOf("") }
-    var liked by remember { mutableStateOf(false) }
     var showCommentsSheet by remember { mutableStateOf(false) }
+    val hasLiked by viewModel.hasUserLikedPostFlow(post.id).collectAsState(initial = false)
+    val uiState by viewModel.uiState.collectAsState()
+
+    LaunchedEffect(Unit) {
+        viewModel.resetUiState()
+    }
+
+    LaunchedEffect(uiState) {
+        when (val state = uiState) {
+            is PostDetailViewModel.UiState.Error -> {
+                snackbarHostState.showSnackbar(state.message)
+            }
+            is PostDetailViewModel.UiState.Success -> {
+                snackbarHostState.showSnackbar(state.message)
+            }
+            else -> {}
+        }
+    }
     
     // Mock comment data for now
     val comments = remember { mutableStateListOf<com.neo.data.model.Comment>() }
@@ -151,11 +171,23 @@ fun PostDetailScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(32.dp)
                             ) {
-                                IconButton(onClick = { liked = !liked }) {
+                                IconButton(
+                                    onClick = {
+                                        viewModel.toggleLike(
+                                            postId = post.id,
+                                            userName = "Current User",
+                                            onError = { error: String ->
+                                                scope.launch {
+                                                    snackbarHostState.showSnackbar(message = error)
+                                                }
+                                            }
+                                        )
+                                    }
+                                ) {
                                     Icon(
-                                        imageVector = if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                        imageVector = if (hasLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                                         contentDescription = "Like",
-                                        tint = if (liked) NeoOrange else TextWhite60
+                                        tint = if (hasLiked) MaterialTheme.colorScheme.error else TextWhite60
                                     )
                                 }
                                 IconButton(onClick = { showCommentsSheet = true }) {
@@ -249,9 +281,9 @@ fun PostDetailScreen(
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = TextWhite,
                             unfocusedTextColor = TextWhite,
-                            focusedBorderColor = NeoPurple,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
                             unfocusedBorderColor = BorderWhite10,
-                            cursorColor = NeoPurple
+                            cursorColor = MaterialTheme.colorScheme.primary
                         ),
                         shape = RoundedCornerShape(16.dp)
                     )
@@ -281,7 +313,7 @@ fun PostDetailScreen(
                         Icon(
                             imageVector = Icons.Default.Send,
                             contentDescription = "Send",
-                            tint = if (commentText.isNotBlank()) NeoPurple else TextWhite40
+                            tint = if (commentText.isNotBlank()) MaterialTheme.colorScheme.primary else TextWhite40
                         )
                     }
                 }

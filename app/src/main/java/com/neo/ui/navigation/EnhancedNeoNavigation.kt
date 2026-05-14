@@ -12,9 +12,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.neo.data.preferences.UserPreferences
 import com.neo.ui.components.EnhancedBottomNavigation
 import com.neo.ui.screens.*
+import com.neo.ui.viewmodel.CreatePostViewModel
 import com.neo.ui.viewmodel.FeedViewModel
+import com.neo.ui.viewmodel.ProfileViewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import kotlinx.coroutines.launch
 
 /**
@@ -23,35 +27,21 @@ import kotlinx.coroutines.launch
 @Composable
 fun EnhancedNeoNavigation(
     viewModel: FeedViewModel,
+    userPreferences: UserPreferences,
     modifier: Modifier = Modifier
 ) {
     val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
-    
+
+    var startDestination by remember { mutableStateOf(if (userPreferences.isOnboardingComplete) "feed" else "onboarding") }
+
     // Track current route for bottom navigation
     val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route ?: "feed"
-    
+    val currentRoute = navBackStackEntry?.destination?.route ?: startDestination
+
     // Collect state from ViewModel
     val posts by viewModel.posts.collectAsState()
     val connectedPeersCount by viewModel.connectedPeersCount.collectAsState()
-    val uiState by viewModel.uiState.collectAsState()
-    
-    // Handle UI state changes
-    LaunchedEffect(uiState) {
-        when (val state = uiState) {
-            is FeedViewModel.UiState.Success -> {
-                snackbarHostState.showSnackbar(state.message)
-                viewModel.resetUiState()
-                // Don't auto-navigate away - let user dismiss manually
-            }
-            is FeedViewModel.UiState.Error -> {
-                snackbarHostState.showSnackbar(state.message)
-                viewModel.resetUiState()
-            }
-            else -> {}
-        }
-    }
     
     Scaffold(
         bottomBar = {
@@ -59,13 +49,11 @@ fun EnhancedNeoNavigation(
             if (currentRoute in listOf("feed", "search", "ble_status", "notifications", "profile")) {
                 EnhancedBottomNavigation(
                     selectedRoute = currentRoute,
+                    onFabClick = { navController.navigate("create_post") },
                     onNavigate = { route ->
                         navController.navigate(route) {
-                            // Pop up to the start destination to avoid building up a large stack
                             popUpTo("feed") { saveState = true }
-                            // Avoid multiple copies of the same destination
                             launchSingleTop = true
-                            // Restore state when reselecting a previously selected item
                             restoreState = true
                         }
                     }
@@ -76,11 +64,23 @@ fun EnhancedNeoNavigation(
     ) { paddingValues ->
         NavHost(
             navController = navController,
-            startDestination = "feed",
+            startDestination = startDestination,
             modifier = modifier.padding(paddingValues)
         ) {
-        // Main Feed
-        composable("feed") {
+            // Onboarding
+            composable("onboarding") {
+                OnboardingScreen(
+                    onComplete = {
+                        userPreferences.isOnboardingComplete = true
+                        navController.navigate("feed") {
+                            popUpTo("onboarding") { inclusive = true }
+                        }
+                    }
+                )
+            }
+
+            // Main Feed
+            composable("feed") {
             EnhancedFeedScreen(
                 viewModel = viewModel,
                 onNavigateToProfile = { navController.navigate("profile") },
@@ -97,12 +97,12 @@ fun EnhancedNeoNavigation(
         
         // Create Post
         composable("create_post") {
+            val createPostViewModel: CreatePostViewModel = hiltViewModel()
             EnhancedCreatePostScreen(
+                viewModel = createPostViewModel,
+                snackbarHostState = snackbarHostState,
                 onPostClick = { content, authorName, imageUri ->
-                    viewModel.createPost(content, authorName, imageUri)
-                    navController.navigate("feed") {
-                        popUpTo("feed") { inclusive = true }
-                    }
+                    createPostViewModel.createPost(content, authorName, imageUri)
                 },
                 onDismiss = {
                     navController.navigate("feed") {
@@ -114,23 +114,25 @@ fun EnhancedNeoNavigation(
         
         // Profile
         composable("profile") {
+            val profileViewModel: ProfileViewModel = hiltViewModel()
             ProfileScreen(
-                viewModel = viewModel,
+                viewModel = profileViewModel,
                 onBack = { navController.popBackStack() },
                 onEditProfile = { navController.navigate("edit_profile") }
             )
         }
-        
+
         // Edit Profile
         composable("edit_profile") {
-            val currentName by viewModel.profileName.collectAsState()
-            val currentBio by viewModel.profileBio.collectAsState()
-            
+            val profileViewModel: ProfileViewModel = hiltViewModel()
+            val currentName by profileViewModel.profileName.collectAsState()
+            val currentBio by profileViewModel.profileBio.collectAsState()
+
             EditProfileScreen(
                 currentName = currentName,
                 currentBio = currentBio,
                 onSave = { name, bio ->
-                    viewModel.updateProfile(name, bio)
+                    profileViewModel.updateProfile(name, bio)
                     navController.popBackStack()
                 },
                 onCancel = { navController.popBackStack() }
@@ -208,8 +210,10 @@ fun EnhancedNeoNavigation(
             val post = posts.find { it.id == postId }
             
             if (post != null) {
+                val postDetailViewModel: com.neo.ui.viewmodel.PostDetailViewModel = hiltViewModel()
                 PostDetailScreen(
                     post = post,
+                    viewModel = postDetailViewModel,
                     onBack = { navController.popBackStack() }
                 )
             }

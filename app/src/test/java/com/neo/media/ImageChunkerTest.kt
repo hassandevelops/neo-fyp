@@ -67,7 +67,7 @@ class ImageChunkerTest {
     @Test
     fun `test reassembleChunks reconstructs original data`() {
         // Arrange
-        val originalData = "Original image data " * 500 // Repeat to make it larger
+        val originalData = "Original image data ".repeat(500) // Repeat to make it larger
         val postId = "test-post-reassemble"
         val chunks = imageChunker.chunkImage(originalData, postId)
         

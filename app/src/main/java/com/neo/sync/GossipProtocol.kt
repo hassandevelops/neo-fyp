@@ -10,12 +10,17 @@ import com.neo.data.repository.PostRepository
 import com.neo.data.repository.BlockedUserRepository
 import com.neo.data.repository.CommentRepository
 import com.neo.data.repository.ReactionRepository
+import com.neo.domain.port.ISyncPort
 import com.neo.media.ImageChunker
+import com.neo.media.ImageFileStore
 import com.neo.security.CryptoManager
+import com.neo.security.RateLimiter
+import com.neo.di.ApplicationScope
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -33,36 +38,47 @@ class GossipProtocol @Inject constructor(
     private val commentRepository: CommentRepository,
     private val reactionRepository: ReactionRepository,
     private val ackManager: AckManager,
-    private val conflictResolver: ConflictResolver
-) {
+    private val conflictResolver: ConflictResolver,
+    private val seenMessageCache: SeenMessageCache,
+    private val rateLimiter: RateLimiter,
+    private val imageFileStore: ImageFileStore,
+    @ApplicationScope private val scope: CoroutineScope
+) : ISyncPort {
     companion object {
         private const val TAG = "GossipProtocol"
         private const val INITIAL_TTL = 7
         private const val CHUNK_DELAY_MS = 50L // Delay between chunks to avoid congestion
     }
-    
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     private var bluetoothService: BluetoothService? = null
     private val chunkAssemblyManager = ImageChunker.ChunkAssemblyManager()
-    
+    private val _connectedPeersCount = MutableStateFlow(0)
+
+    override val connectedPeersCount: StateFlow<Int> = _connectedPeersCount.asStateFlow()
+
     /**
      * Set the Bluetooth service for message broadcasting.
      */
     fun setBluetoothService(service: BluetoothService) {
         this.bluetoothService = service
+        scope.launch {
+            service.connectedPeers.collect { peers ->
+                _connectedPeersCount.value = peers.size
+            }
+        }
     }
     
     /**
      * Broadcast a newly created post to all connected peers.
      * If post has image data, broadcasts metadata and chunks.
      */
-    suspend fun broadcastPost(post: Post) {
+    override suspend fun broadcastPost(post: Post) {
         val service = bluetoothService
         if (service == null) {
             Log.w(TAG, "Bluetooth service not available")
             return
         }
-        
+
         val message = Message.PostBroadcast(
             id = post.id,
             authorId = post.authorId,
@@ -73,12 +89,20 @@ class GossipProtocol @Inject constructor(
             publicKey = post.publicKey,
             ttl = post.ttl
         )
-        
-        service.broadcastMessage(message)
-        Log.d(TAG, "Broadcasted post ${post.id} to all peers")
-        
+
+        val peerAddresses = service.getConnectedPeerAddresses()
+        for (peerAddress in peerAddresses) {
+            ackManager.sendWithAck(
+                messageId = post.id,
+                message = message,
+                peerAddress = peerAddress,
+                sendFunction = { msg, addr -> service.sendMessage(addr, msg) }
+            )
+        }
+        Log.d(TAG, "Broadcasted post ${post.id} to ${peerAddresses.size} peers")
+
         // Broadcast image if present
-        if (post.imageData != null && post.imageHash != null) {
+        if (post.imageHash != null) {
             broadcastImage(post)
         }
     }
@@ -86,13 +110,13 @@ class GossipProtocol @Inject constructor(
     /**
      * Broadcast a comment to all connected peers.
      */
-    suspend fun broadcastComment(comment: com.neo.data.model.Comment) {
+    override suspend fun broadcastComment(comment: com.neo.data.model.Comment) {
         val service = bluetoothService
         if (service == null) {
             Log.w(TAG, "Bluetooth service not available")
             return
         }
-        
+
         val message = Message.CommentBroadcast(
             id = comment.id,
             postId = comment.postId,
@@ -105,9 +129,17 @@ class GossipProtocol @Inject constructor(
             publicKey = comment.publicKey,
             ttl = comment.ttl
         )
-        
-        service.broadcastMessage(message)
-        Log.d(TAG, "Broadcasted comment ${comment.id} to all peers")
+
+        val peerAddresses = service.getConnectedPeerAddresses()
+        for (peerAddress in peerAddresses) {
+            ackManager.sendWithAck(
+                messageId = comment.id,
+                message = message,
+                peerAddress = peerAddress,
+                sendFunction = { msg, addr -> service.sendMessage(addr, msg) }
+            )
+        }
+        Log.d(TAG, "Broadcasted comment ${comment.id} to ${peerAddresses.size} peers")
     }
     
     /**
@@ -115,24 +147,30 @@ class GossipProtocol @Inject constructor(
      */
     private suspend fun broadcastImage(post: Post) {
         val service = bluetoothService ?: return
-        val imageData = post.imageData ?: return
-        
+        val imageHash = post.imageHash ?: return
+
+        // Load image from file store
+        val imageData = imageFileStore.load(imageHash) ?: run {
+            Log.w(TAG, "Image not found in file store: $imageHash")
+            return
+        }
+
         // Send metadata first
         val metadata = Message.ImageMetadata(
             postId = post.id,
-            imageHash = post.imageHash!!, 
+            imageHash = imageHash,
             totalSize = post.imageSize ?: 0,
-            totalChunks = (imageData.length + ImageChunker.CHUNK_SIZE - 1) / ImageChunker.CHUNK_SIZE,
+            totalChunks = (imageData.size + ImageChunker.CHUNK_SIZE - 1) / ImageChunker.CHUNK_SIZE,
             width = post.imageWidth ?: 0,
             height = post.imageHeight ?: 0
         )
         service.broadcastMessage(metadata)
         Log.d(TAG, "Sent image metadata for post ${post.id}")
-        
+
         // Chunk and send image data
         val chunker = ImageChunker()
-        val chunks = chunker.chunkImage(imageData, post.id)
-        
+        val chunks = chunker.chunkImage(imageData.decodeToString(), post.id)
+
         for (chunk in chunks) {
             val chunkMessage = Message.ImageChunk(
                 postId = chunk.postId,
@@ -144,7 +182,7 @@ class GossipProtocol @Inject constructor(
             service.broadcastMessage(chunkMessage)
             delay(CHUNK_DELAY_MS) // Small delay to avoid congestion
         }
-        
+
         Log.d(TAG, "Sent ${chunks.size} image chunks for post ${post.id}")
     }
     
@@ -156,12 +194,24 @@ class GossipProtocol @Inject constructor(
         postBroadcast: Message.PostBroadcast,
         fromPeerAddress: String
     ) {
+        // Check if we've already seen this message
+        if (!seenMessageCache.checkAndAdd(postBroadcast.id)) {
+            Log.d(TAG, "Already seen post ${postBroadcast.id}, ignoring")
+            return
+        }
+
         // Check if author is blocked
         if (blockedUserRepository.isBlocked(postBroadcast.authorId)) {
             Log.w(TAG, "Post from blocked user ${postBroadcast.authorId}, ignoring")
             return
         }
-        
+
+        // Check inbound rate limit
+        if (!rateLimiter.canAcceptInboundPost(postBroadcast.authorId)) {
+            Log.w(TAG, "Inbound rate limit exceeded for author ${postBroadcast.authorId}, dropping post from peer $fromPeerAddress")
+            return
+        }
+
         // Check if we already have this post
         val existingPost = postRepository.getPostById(postBroadcast.id)
         
@@ -176,12 +226,7 @@ class GossipProtocol @Inject constructor(
                 signature = postBroadcast.signature,
                 publicKey = postBroadcast.publicKey,
                 ttl = postBroadcast.ttl,
-                firstSeenTimestamp = System.currentTimeMillis(),
-                imageData = null,
-                imageHash = null,
-                imageSize = null,
-                imageWidth = null,
-                imageHeight = null
+                firstSeenTimestamp = System.currentTimeMillis()
             )
             
             if (conflictResolver.isConflict(existingPost, newPost)) {
@@ -262,11 +307,11 @@ class GossipProtocol @Inject constructor(
             Log.w(TAG, "Bluetooth service not available for forwarding")
             return
         }
-        
+
         // Decrement TTL
         val newTtl = post.ttl - 1
         if (newTtl < 0) return
-        
+
         val message = Message.PostBroadcast(
             id = post.id,
             authorId = post.authorId,
@@ -277,9 +322,17 @@ class GossipProtocol @Inject constructor(
             publicKey = post.publicKey,
             ttl = newTtl
         )
-        
-        service.broadcastMessage(message, excludePeer = excludePeerAddress)
-        Log.d(TAG, "Forwarded post ${post.id} with TTL=$newTtl")
+
+        val peerAddresses = service.getConnectedPeerAddresses().filter { it != excludePeerAddress }
+        for (peerAddress in peerAddresses) {
+            ackManager.sendWithAck(
+                messageId = "${post.id}_forward",
+                message = message,
+                peerAddress = peerAddress,
+                sendFunction = { msg, addr -> service.sendMessage(addr, msg) }
+            )
+        }
+        Log.d(TAG, "Forwarded post ${post.id} with TTL=$newTtl to ${peerAddresses.size} peers")
     }
     
     /**
@@ -325,7 +378,7 @@ class GossipProtocol @Inject constructor(
     
     /**
      * Handle received image chunk.
-     * Assembles chunks and updates post when complete.
+     * Assembles chunks and saves to ImageFileStore when complete.
      */
     suspend fun handleImageChunk(chunk: Message.ImageChunk, peerAddress: String) {
         val imageChunk = ImageChunker.ImageChunk(
@@ -335,25 +388,29 @@ class GossipProtocol @Inject constructor(
             data = chunk.data,
             checksum = chunk.checksum
         )
-        
+
         val completeImageData = chunkAssemblyManager.addChunk(imageChunk)
-        
+
         if (completeImageData != null) {
-            // All chunks received, update the post
+            // All chunks received, save to file store
             Log.d(TAG, "Image assembly complete for post ${chunk.postId}")
-            
-            // Get the existing post
+
+            // Get the existing post to get the imageHash
             val existingPost = postRepository.getPostById(chunk.postId)
-            if (existingPost != null) {
-                // Update post with image data
-                val updatedPost = existingPost.copy(
-                    imageData = completeImageData
-                )
-                postRepository.updatePost(updatedPost)
-                Log.d(TAG, "Updated post ${chunk.postId} with image data")
+            if (existingPost != null && existingPost.imageHash != null) {
+                // Save image to file store
+                val imageBytes = completeImageData.toByteArray()
+                val savedPath = imageFileStore.save(existingPost.imageHash, imageBytes)
+                if (savedPath != null) {
+                    Log.d(TAG, "Saved image to file store: ${existingPost.imageHash}")
+                } else {
+                    Log.w(TAG, "Failed to save image to file store")
+                }
+            } else {
+                Log.w(TAG, "Post not found or missing imageHash for post ${chunk.postId}")
             }
         }
-        
+
         Log.d(TAG, "Image chunk ${chunk.chunkIndex + 1}/${chunk.totalChunks} received for post ${chunk.postId}")
     }
     
@@ -378,12 +435,24 @@ class GossipProtocol @Inject constructor(
         commentBroadcast: Message.CommentBroadcast,
         fromPeerAddress: String
     ) {
+        // Check if we've already seen this message
+        if (!seenMessageCache.checkAndAdd(commentBroadcast.id)) {
+            Log.d(TAG, "Already seen comment ${commentBroadcast.id}, ignoring")
+            return
+        }
+
         // Check if author is blocked
         if (blockedUserRepository.isBlocked(commentBroadcast.authorId)) {
             Log.w(TAG, "Comment from blocked user ${commentBroadcast.authorId}, ignoring")
             return
         }
-        
+
+        // Check inbound rate limit
+        if (!rateLimiter.canAcceptInboundComment(commentBroadcast.authorId)) {
+            Log.w(TAG, "Inbound rate limit exceeded for author ${commentBroadcast.authorId}, dropping comment from peer $fromPeerAddress")
+            return
+        }
+
         // Check if we already have this comment
         if (commentRepository.commentExists(commentBroadcast.id)) {
             Log.d(TAG, "Comment ${commentBroadcast.id} already exists, ignoring")
@@ -470,7 +539,9 @@ class GossipProtocol @Inject constructor(
     /**
      * Broadcast a reaction to all connected peers.
      */
-    suspend fun broadcastReaction(reaction: com.neo.data.model.Reaction) {
+    override suspend fun broadcastReaction(reaction: com.neo.data.model.Reaction) {
+        val service = bluetoothService ?: return
+
         val message = Message.ReactionBroadcast(
             id = reaction.id,
             postId = reaction.postId,
@@ -482,9 +553,17 @@ class GossipProtocol @Inject constructor(
             publicKey = reaction.publicKey,
             ttl = reaction.ttl
         )
-        
-        bluetoothService?.broadcastMessage(message)
-        Log.d(TAG, "Broadcasted reaction ${reaction.id} for post ${reaction.postId}")
+
+        val peerAddresses = service.getConnectedPeerAddresses()
+        for (peerAddress in peerAddresses) {
+            ackManager.sendWithAck(
+                messageId = reaction.id,
+                message = message,
+                peerAddress = peerAddress,
+                sendFunction = { msg, addr -> service.sendMessage(addr, msg) }
+            )
+        }
+        Log.d(TAG, "Broadcasted reaction ${reaction.id} for post ${reaction.postId} to ${peerAddresses.size} peers")
     }
     
     /**
@@ -494,12 +573,24 @@ class GossipProtocol @Inject constructor(
         reactionBroadcast: Message.ReactionBroadcast,
         fromPeerAddress: String
     ) {
+        // Check if we've already seen this message
+        if (!seenMessageCache.checkAndAdd(reactionBroadcast.id)) {
+            Log.d(TAG, "Already seen reaction ${reactionBroadcast.id}, ignoring")
+            return
+        }
+
         // Check if author is blocked
         if (blockedUserRepository.isBlocked(reactionBroadcast.userId)) {
             Log.w(TAG, "Reaction from blocked user ${reactionBroadcast.userId}, ignoring")
             return
         }
-        
+
+        // Check inbound rate limit
+        if (!rateLimiter.canAcceptInboundReaction(reactionBroadcast.userId)) {
+            Log.w(TAG, "Inbound rate limit exceeded for user ${reactionBroadcast.userId}, dropping reaction from peer $fromPeerAddress")
+            return
+        }
+
         // Check if we already have this reaction
         if (reactionRepository.reactionExists(reactionBroadcast.id)) {
             Log.d(TAG, "Reaction ${reactionBroadcast.id} already exists, ignoring")

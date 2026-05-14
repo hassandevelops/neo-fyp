@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neo.ui.components.GradientBackground
 import com.neo.ui.theme.*
+import androidx.compose.material3.MaterialTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,9 +76,9 @@ fun SearchScreen(
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedTextColor = TextWhite,
                                 unfocusedTextColor = TextWhite,
-                                focusedBorderColor = NeoPurple,
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
                                 unfocusedBorderColor = BorderWhite10,
-                                cursorColor = NeoPurple
+                                cursorColor = MaterialTheme.colorScheme.primary
                             ),
                             shape = RoundedCornerShape(16.dp),
                             singleLine = true
@@ -363,7 +364,7 @@ private fun SettingsItem(
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = NeoPurple,
+                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(24.dp)
                 )
                 Text(

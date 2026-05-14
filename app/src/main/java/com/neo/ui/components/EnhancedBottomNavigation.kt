@@ -2,160 +2,121 @@ package com.neo.ui.components
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.neo.ui.theme.*
 
 /**
- * Bottom navigation bar with gradient theme
+ * Bottom navigation bar.
+ * Layout from design samples:
+ *   Home | Search | [LIME FAB] | Bell | Profile
+ * Active icon: NeoLime  |  Inactive: white/40
  */
 @Composable
 fun EnhancedBottomNavigation(
     selectedRoute: String,
     onNavigate: (String) -> Unit,
+    onFabClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val infiniteTransition = rememberInfiniteTransition(label = "fab_glow")
+    val fabGlow by infiniteTransition.animateFloat(
+        initialValue = 0.4f, targetValue = 0.85f,
+        animationSpec = infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "fab_glow"
+    )
+
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = NeoBlack.copy(alpha = 0.95f),
-        tonalElevation = 8.dp,
-        shadowElevation = 16.dp
+        color = NeoBlack,
+        tonalElevation = 0.dp
     ) {
-        Box(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            NeoGray900.copy(alpha = 0.8f),
-                            NeoBlack
-                        )
-                    )
-                )
+                .padding(horizontal = 24.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceAround,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
+            // Home
+            NavIcon(
+                icon = if (selectedRoute == "feed") Icons.Filled.Home else Icons.Outlined.Home,
+                selected = selectedRoute == "feed",
+                onClick = { onNavigate("feed") }
+            )
+
+            // Search
+            NavIcon(
+                icon = if (selectedRoute == "search") Icons.Filled.Search else Icons.Outlined.Search,
+                selected = selectedRoute == "search",
+                onClick = { onNavigate("search") }
+            )
+
+            // ── Center NeoLime FAB ───────────────────────────────────────
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 12.dp, horizontal = 16.dp),
-                horizontalArrangement = Arrangement.SpaceAround,
-                verticalAlignment = Alignment.CenterVertically
+                    .size(56.dp)
+                    .shadow(
+                        elevation = 18.dp,
+                        shape = CircleShape,
+                        ambientColor = NeoLime.copy(alpha = fabGlow),
+                        spotColor = NeoLime.copy(alpha = fabGlow)
+                    )
+                    .clip(CircleShape)
+                    .background(NeoLime)
+                    .clickable(onClick = onFabClick),
+                contentAlignment = Alignment.Center
             ) {
-                BottomNavItem(
-                    icon = Icons.Default.Home,
-                    label = "Feed",
-                    selected = selectedRoute == "feed",
-                    onClick = { onNavigate("feed") }
-                )
-                
-                BottomNavItem(
-                    icon = Icons.Default.Search,
-                    label = "Search",
-                    selected = selectedRoute == "search",
-                    onClick = { onNavigate("search") }
-                )
-                
-                BottomNavItem(
-                    icon = Icons.Default.Radio,
-                    label = "Network",
-                    selected = selectedRoute == "ble_status",
-                    onClick = { onNavigate("ble_status") }
-                )
-                
-                BottomNavItem(
-                    icon = Icons.Default.Notifications,
-                    label = "Alerts",
-                    selected = selectedRoute == "notifications",
-                    onClick = { onNavigate("notifications") }
-                )
-                
-                BottomNavItem(
-                    icon = Icons.Default.Person,
-                    label = "Profile",
-                    selected = selectedRoute == "profile",
-                    onClick = { onNavigate("profile") }
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "Create post",
+                    tint = NeoBlack,
+                    modifier = Modifier.size(28.dp)
                 )
             }
+
+            // Bell
+            NavIcon(
+                icon = if (selectedRoute == "notifications") Icons.Filled.Notifications else Icons.Outlined.Notifications,
+                selected = selectedRoute == "notifications",
+                onClick = { onNavigate("notifications") }
+            )
+
+            // Profile
+            NavIcon(
+                icon = if (selectedRoute == "profile") Icons.Filled.Person else Icons.Outlined.Person,
+                selected = selectedRoute == "profile",
+                onClick = { onNavigate("profile") }
+            )
         }
     }
 }
 
 @Composable
-private fun BottomNavItem(
+private fun NavIcon(
     icon: ImageVector,
-    label: String,
     selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    onClick: () -> Unit
 ) {
-    val scale by animateFloatAsState(
-        targetValue = if (selected) 1.1f else 1f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow
-        ),
-        label = "scale"
-    )
-    
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(
-                if (selected) SurfaceWhite10 else androidx.compose.ui.graphics.Color.Transparent
-            )
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        IconButton(
-            onClick = onClick,
-            modifier = Modifier.size(32.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(if (selected) 40.dp else 32.dp)
-                    .background(
-                        brush = if (selected) {
-                            Brush.linearGradient(
-                                colors = listOf(NeoPurple, NeoOrange, NeoTeal)
-                            )
-                        } else {
-                            Brush.linearGradient(
-                                colors = listOf(SurfaceWhite5, SurfaceWhite5)
-                            )
-                        },
-                        shape = CircleShape
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = label,
-                    tint = if (selected) TextWhite else TextWhite60,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-        }
-        
-        if (selected) {
-            Text(
-                text = label,
-                color = TextWhite,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
+    val tint = if (selected) NeoLime else TextWhite40
+    IconButton(onClick = onClick, modifier = Modifier.size(44.dp)) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(24.dp)
+        )
     }
 }

@@ -2,22 +2,24 @@ package com.neo.ui.components
 
 import android.content.Context
 import android.content.Intent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -30,7 +32,8 @@ import com.neo.data.model.Post
 import com.neo.ui.theme.*
 
 /**
- * Enhanced post card with gradient borders and glow effects
+ * Post card — full-bleed image with dark scrim overlay.
+ * Author info and stats overlaid at the bottom of the image.
  */
 @Composable
 fun EnhancedPostCard(
@@ -39,209 +42,241 @@ fun EnhancedPostCard(
     onLikeClick: () -> Unit,
     onCommentClick: () -> Unit,
     commentCount: Int = 0,
+    isLive: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     var liked by remember { mutableStateOf(false) }
     var saved by remember { mutableStateOf(false) }
-    var likes by remember { mutableStateOf(0) }
-    
-    // Animated scale for like button
+    var likes by remember { mutableIntStateOf(0) }
+
+    val likeColor by animateColorAsState(
+        targetValue = if (liked) NeoLime else TextWhite60,
+        label = "like_color"
+    )
     val likeScale by animateFloatAsState(
-        targetValue = if (liked) 1.2f else 1f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow
-        ),
+        targetValue = if (liked) 1.3f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
         label = "like_scale"
     )
-    
+    val bookmarkColor by animateColorAsState(
+        targetValue = if (saved) NeoLime else TextWhite60,
+        label = "bookmark_color"
+    )
+
+    val infiniteTransition = rememberInfiniteTransition(label = "live_pulse")
+    val livePulse by infiniteTransition.animateFloat(
+        initialValue = 0.6f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(700),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "live_pulse"
+    )
+
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .shadow(
-                elevation = 20.dp,
-                shape = RoundedCornerShape(24.dp),
-                ambientColor = NeoPurple.copy(alpha = 0.15f),
-                spotColor = NeoOrange.copy(alpha = 0.1f)
-            )
+            .clip(RoundedCornerShape(20.dp))
             .clickable(onClick = onPostClick),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = SurfaceWhite5
-        )
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = NeoGray900)
     ) {
-        Column {
-            // Header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        Box {
+            // ── Image / content area ──────────────────────────────────────
+            val imagePath = remember(post.imageHash) {
+                post.imageHash?.let {
+                    java.io.File(context.filesDir, "images/$it.jpg").takeIf { f -> f.exists() }
+                }
+            }
+
+            if (imagePath != null) {
+                Image(
+                    painter = rememberAsyncImagePainter(model = imagePath),
+                    contentDescription = "Post image",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 220.dp, max = 380.dp),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                // Text-only card body
+                Text(
+                    text = post.content,
+                    color = TextWhite,
+                    fontSize = 15.sp,
+                    lineHeight = 22.sp,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+
+            // ── Dark scrim over the bottom of the image ───────────────────
+            if (imagePath != null) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                0.0f to Color.Transparent,
+                                0.35f to Color.Transparent,
+                                1.0f to Color.Black.copy(alpha = 0.75f)
+                            )
+                        )
+                )
+            }
+
+            // ── LIVE badge — top-left ─────────────────────────────────────
+            if (isLive) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(12.dp)
+                        .background(NeoBlack.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    // Avatar
                     Box(
                         modifier = Modifier
-                            .size(40.dp)
+                            .size(7.dp)
+                            .scale(livePulse)
+                            .background(NeoGreen, CircleShape)
+                    )
+                    Text("LIVE", color = TextWhite, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            // ── View count — top-right ─────────────────────────────────────
+            if (imagePath != null && commentCount > 0) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(12.dp)
+                        .background(NeoBlack.copy(alpha = 0.5f), RoundedCornerShape(20.dp))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(Icons.Default.People, null, tint = TextWhite60, modifier = Modifier.size(13.dp))
+                    Text(
+                        text = if (commentCount > 999) "${commentCount / 1000}K" else commentCount.toString(),
+                        color = TextWhite,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+
+            // ── Bottom: author + stats row ─────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
+            ) {
+                // Author row
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
                             .clip(CircleShape)
-                            .border(1.dp, BorderWhite20, CircleShape)
+                            .background(NeoGray800),
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.Person,
-                            contentDescription = "Author",
+                            contentDescription = null,
                             tint = TextWhite60,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(8.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                     }
-                    
                     Column {
                         Text(
                             text = post.authorName,
                             color = TextWhite,
                             fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.SemiBold
                         )
-                        Text(
-                            text = formatTimestamp(post.timestamp),
-                            color = TextWhite40,
-                            fontSize = 12.sp
-                        )
-                    }
-                }
-                
-                IconButton(onClick = { /* More options */ }) {
-                    Icon(
-                        imageVector = Icons.Default.MoreVert,
-                        contentDescription = "More",
-                        tint = TextWhite60
-                    )
-                }
-            }
-            
-            // Content
-            if (post.content.isNotEmpty()) {
-                Text(
-                    text = post.content,
-                    color = TextWhite80,
-                    fontSize = 14.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
-            }
-            
-            // Image if present
-            if (!post.imageUri.isNullOrBlank()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .border(
-                            1.dp,
-                            Brush.linearGradient(
-                                colors = listOf(
-                                    NeoOrange.copy(alpha = 0.3f),
-                                    NeoPink.copy(alpha = 0.3f)
-                                )
-                            ),
-                            RoundedCornerShape(12.dp)
-                        )
-                ) {
-                    Image(
-                        painter = rememberAsyncImagePainter(
-                            model = java.io.File(post.imageUri)
-                        ),
-                        contentDescription = "Post image",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 300.dp),
-                        contentScale = ContentScale.Crop
-                    )
-                }
-            }
-            
-            // Actions
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    // Like button
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable {
-                            liked = !liked
-                            likes = if (liked) likes + 1 else likes - 1
-                            onLikeClick()
+                        if (post.content.isNotEmpty() && imagePath != null) {
+                            Text(
+                                text = post.content,
+                                color = TextWhite60,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
                         }
-                    ) {
-                        Icon(
-                            imageVector = if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            contentDescription = "Like",
-                            tint = if (liked) NeoOrange else TextWhite60,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Text(
-                            text = likes.toString(),
-                            color = TextWhite80,
-                            fontSize = 14.sp
-                        )
                     }
-                    
-                    // Comment button
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable(onClick = onCommentClick)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ChatBubbleOutline,
-                            contentDescription = "Comment",
-                            tint = TextWhite60,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Text(
-                            text = commentCount.toString(),
-                            color = TextWhite80,
-                            fontSize = 14.sp
-                        )
-                    }
-                    
-                    // Share button
-                    // Share button
-                    Box(
-                        modifier = Modifier
-                            .clickable { sharePost(context, post) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Share,
-                            contentDescription = "Share",
-                            tint = TextWhite60,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                    
                 }
-                
-                // Bookmark button
-                IconButton(onClick = { saved = !saved }) {
+
+                Spacer(Modifier.height(10.dp))
+
+                // Action row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(20.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Like
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            modifier = Modifier.clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                liked = !liked
+                                likes = if (liked) likes + 1 else (likes - 1).coerceAtLeast(0)
+                                onLikeClick()
+                            }
+                        ) {
+                            Box(modifier = Modifier.scale(likeScale)) {
+                                Icon(
+                                    imageVector = if (liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                                    contentDescription = "Like",
+                                    tint = likeColor,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Text(likes.toString(), color = TextWhite80, fontSize = 13.sp)
+                        }
+
+                        // Comment
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            modifier = Modifier.clickable(onClick = onCommentClick)
+                        ) {
+                            Icon(Icons.Outlined.ChatBubbleOutline, "Comment", tint = TextWhite60, modifier = Modifier.size(20.dp))
+                            Text(commentCount.toString(), color = TextWhite80, fontSize = 13.sp)
+                        }
+
+                        // Share
+                        Icon(
+                            Icons.Outlined.Share,
+                            "Share",
+                            tint = TextWhite60,
+                            modifier = Modifier
+                                .size(20.dp)
+                                .clickable { sharePost(context, post) }
+                        )
+                    }
+
+                    // Bookmark
                     Icon(
-                        imageVector = if (saved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                        imageVector = if (saved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
                         contentDescription = "Save",
-                        tint = if (saved) NeoPurple else TextWhite60,
-                        modifier = Modifier.size(24.dp)
+                        tint = bookmarkColor,
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clickable { saved = !saved }
                     )
                 }
             }
@@ -250,30 +285,16 @@ fun EnhancedPostCard(
 }
 
 private fun formatTimestamp(timestamp: Long): String {
-    val now = System.currentTimeMillis()
-    val diff = now - timestamp
-    val seconds = diff / 1000
-    val minutes = seconds / 60
-    val hours = minutes / 60
-    val days = hours / 24
-    
-    return when {
-        days > 0 -> "${days}d ago"
-        hours > 0 -> "${hours}h ago"
-        minutes > 0 -> "${minutes}m ago"
-        else -> "Just now"
-    }
+    val diff = System.currentTimeMillis() - timestamp
+    val m = diff / 60000; val h = m / 60; val d = h / 24
+    return when { d > 0 -> "${d}d ago"; h > 0 -> "${h}h ago"; m > 0 -> "${m}m ago"; else -> "Just now" }
 }
 
-/**
- * Share post content using Android's native share dialog
- */
 private fun sharePost(context: Context, post: Post) {
-    val shareIntent = Intent().apply {
-        action = Intent.ACTION_SEND
+    val intent = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
         putExtra(Intent.EXTRA_TEXT, "Check out this post by ${post.authorName}:\n\n${post.content}")
         putExtra(Intent.EXTRA_SUBJECT, "Neo Post")
     }
-    context.startActivity(Intent.createChooser(shareIntent, "Share post via"))
+    context.startActivity(Intent.createChooser(intent, "Share post via"))
 }

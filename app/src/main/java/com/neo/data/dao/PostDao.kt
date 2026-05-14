@@ -1,5 +1,6 @@
 package com.neo.data.dao
 
+import androidx.paging.PagingSource
 import androidx.room.*
 import com.neo.data.model.Post
 import kotlinx.coroutines.flow.Flow
@@ -28,6 +29,21 @@ interface PostDao {
      */
     @Query("SELECT * FROM posts ORDER BY timestamp DESC")
     fun getAllPosts(): Flow<List<Post>>
+
+    /**
+     * Get paginated posts for infinite scrolling feed.
+     * Returns posts ordered by timestamp (newest first).
+     */
+    @Query("SELECT * FROM posts ORDER BY timestamp DESC")
+    fun getPostsPaged(): PagingSource<Int, Post>
+
+    /**
+     * Get paginated posts with a limit.
+     * @param limit Maximum number of posts to return
+     * @param offset Number of posts to skip
+     */
+    @Query("SELECT * FROM posts ORDER BY timestamp DESC LIMIT :limit OFFSET :offset")
+    suspend fun getPostsPaginated(limit: Int, offset: Int): List<Post>
     
     /**
      * Get posts created after a specific timestamp.

@@ -12,18 +12,24 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material3.*
+import androidx.compose.animation.core.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neo.data.model.Post
 import com.neo.ui.components.*
+import com.neo.ui.components.StoryUser
 import com.neo.ui.theme.*
+import androidx.compose.material3.MaterialTheme
 import com.neo.ui.viewmodel.FeedViewModel
 
 /**
@@ -59,13 +65,26 @@ fun EnhancedFeedScreen(
                     onSettingsClick = onNavigateToSettings,
                     notificationCount = 0
                 )
-                
+
                 // Content
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
+                    // Stories Row
+                    item {
+                        StoryRow(
+                            users = mockStoryUsers,
+                            onStoryClick = { userId ->
+                                // Handle story click
+                            },
+                            onAddStoryClick = {
+                                // Open camera/add story
+                            },
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                    }
+
                     // BLE Mesh Status Card
                     item {
                         BLEMeshCard(
@@ -73,7 +92,7 @@ fun EnhancedFeedScreen(
                             onClick = onNavigateToBLEStatus
                         )
                     }
-                    
+
                     // Posts
                     items(posts) { post ->
                         EnhancedPostCard(
@@ -83,25 +102,15 @@ fun EnhancedFeedScreen(
                             onCommentClick = { selectedPostForComments = post }
                         )
                     }
+
+                    // Bottom padding for nav bar
+                    item {
+                        Spacer(modifier = Modifier.height(90.dp))
+                    }
                 }
             }
         }
         
-        // Floating Action Button
-        FloatingActionButton(
-            onClick = onNavigateToCreatePost,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(24.dp),
-            containerColor = NeoPurple,
-            contentColor = TextWhite
-        ) {
-            Icon(
-                imageVector = Icons.Default.Add,
-                contentDescription = "Create Post",
-                modifier = Modifier.size(24.dp)
-            )
-        }
     }
     
     // Comments Bottom Sheet
@@ -153,15 +162,15 @@ private fun BLEMeshCard(
                 .background(
                     brush = Brush.linearGradient(
                         colors = listOf(
-                            NeoCyan.copy(alpha = 0.1f),
-                            NeoPurple.copy(alpha = 0.1f),
-                            NeoPink.copy(alpha = 0.1f)
+                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.1f),
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.1f)
                         )
                     )
                 )
                 .border(
                     width = 1.dp,
-                    color = NeoCyan.copy(alpha = 0.3f),
+                    color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f),
                     shape = RoundedCornerShape(24.dp)
                 )
                 .padding(24.dp)
@@ -179,10 +188,10 @@ private fun BLEMeshCard(
                         modifier = Modifier
                             .size(48.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(NeoCyan.copy(alpha = 0.2f))
+                            .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f))
                             .border(
                                 1.dp,
-                                NeoCyan.copy(alpha = 0.3f),
+                                MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f),
                                 RoundedCornerShape(12.dp)
                             ),
                         contentAlignment = Alignment.Center
@@ -190,7 +199,7 @@ private fun BLEMeshCard(
                         Icon(
                             imageVector = Icons.Default.Radio,
                             contentDescription = "BLE Mesh",
-                            tint = NeoCyan,
+                            tint = MaterialTheme.colorScheme.secondary,
                             modifier = Modifier.size(24.dp)
                         )
                     }
@@ -213,10 +222,22 @@ private fun BLEMeshCard(
                 Icon(
                     imageVector = Icons.Default.Add, // ChevronRight
                     contentDescription = "View",
-                    tint = NeoCyan,
+                    tint = MaterialTheme.colorScheme.secondary,
                     modifier = Modifier.size(20.dp)
                 )
             }
         }
     }
 }
+
+// Mock data for stories (replace with actual data from ViewModel)
+private val mockStoryUsers = listOf(
+    StoryUser("1", "alice", hasStory = true, isLive = true),
+    StoryUser("2", "bob", hasStory = true),
+    StoryUser("3", "charlie", hasStory = true),
+    StoryUser("4", "diana", hasStory = false),
+    StoryUser("5", "eve", hasStory = true),
+    StoryUser("6", "frank", hasStory = true),
+    StoryUser("7", "grace", hasStory = false),
+    StoryUser("8", "henry", hasStory = true)
+)

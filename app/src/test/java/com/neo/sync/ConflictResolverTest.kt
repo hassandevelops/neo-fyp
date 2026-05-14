@@ -158,12 +158,7 @@ class ConflictResolverTest {
             signature = "test-signature",
             publicKey = "test-public-key",
             ttl = 7,
-            firstSeenTimestamp = timestamp,
-            imageData = null,
-            imageHash = null,
-            imageSize = null,
-            imageWidth = null,
-            imageHeight = null
+            firstSeenTimestamp = timestamp
         )
     }
 }

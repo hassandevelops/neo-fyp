@@ -20,10 +20,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import com.neo.bluetooth.BluetoothService
+import com.neo.data.preferences.UserPreferences
+import com.neo.sync.SyncManager
 import com.neo.ui.navigation.EnhancedNeoNavigation
 import com.neo.ui.theme.NeoTheme
 import com.neo.ui.viewmodel.FeedViewModel
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 /**
  * Main activity for Neo app.
@@ -35,8 +38,15 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
-    
+
     private val viewModel: FeedViewModel by viewModels()
+
+    @Inject
+    lateinit var userPreferences: UserPreferences
+
+    @Inject
+    lateinit var syncManager: SyncManager
+
     private var bluetoothService: BluetoothService? = null
     private var isBound = false
     
@@ -45,11 +55,9 @@ class MainActivity : ComponentActivity() {
             val binder = service as BluetoothService.LocalBinder
             bluetoothService = binder.getService()
             isBound = true
-            
-            // Set service in ViewModel
-            bluetoothService?.let { viewModel.setBluetoothService(it) }
+            syncManager.setBluetoothService(binder.getService())
         }
-        
+
         override fun onServiceDisconnected(name: ComponentName?) {
             bluetoothService = null
             isBound = false
@@ -88,7 +96,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    EnhancedNeoNavigation(viewModel = viewModel)
+                    EnhancedNeoNavigation(viewModel = viewModel, userPreferences = userPreferences)
                 }
             }
         }

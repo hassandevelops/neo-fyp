@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neo.ui.components.GradientBackground
 import com.neo.ui.theme.*
+import androidx.compose.material3.MaterialTheme
 
 /**
  * Account Settings Screen
@@ -70,7 +71,7 @@ fun AccountSettingsScreen(
                         icon = Icons.Default.Key,
                         title = "Public Key",
                         subtitle = "View your cryptographic public key",
-                        color = NeoPurple
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
                 item {
@@ -78,7 +79,7 @@ fun AccountSettingsScreen(
                         icon = Icons.Default.Devices,
                         title = "Device ID",
                         subtitle = "Your unique device identifier",
-                        color = NeoCyan
+                        color = MaterialTheme.colorScheme.secondary
                     )
                 }
                 item {
@@ -86,7 +87,7 @@ fun AccountSettingsScreen(
                         icon = Icons.Default.Storage,
                         title = "Storage",
                         subtitle = "Manage local data and cache",
-                        color = NeoOrange
+                        color = MaterialTheme.colorScheme.error
                     )
                 }
             }
@@ -147,7 +148,7 @@ fun PrivacySettingsScreen(
                         subtitle = "Let other devices discover you via Bluetooth",
                         checked = allowDiscovery,
                         onCheckedChange = { allowDiscovery = it },
-                        color = NeoCyan
+                        color = MaterialTheme.colorScheme.secondary
                     )
                 }
                 item {
@@ -157,7 +158,7 @@ fun PrivacySettingsScreen(
                         subtitle = "Automatically sync with nearby peers",
                         checked = autoSync,
                         onCheckedChange = { autoSync = it },
-                        color = NeoPurple
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
                 item {
@@ -167,7 +168,7 @@ fun PrivacySettingsScreen(
                         subtitle = "Help improve Neo by sharing anonymous usage data",
                         checked = shareAnalytics,
                         onCheckedChange = { shareAnalytics = it },
-                        color = NeoOrange
+                        color = MaterialTheme.colorScheme.error
                     )
                 }
                 item {
@@ -237,7 +238,7 @@ fun NotificationSettingsScreen(
                         subtitle = "Receive notifications from Neo",
                         checked = enableNotifications,
                         onCheckedChange = { enableNotifications = it },
-                        color = NeoOrange
+                        color = MaterialTheme.colorScheme.error
                     )
                 }
                 item {
@@ -247,7 +248,7 @@ fun NotificationSettingsScreen(
                         subtitle = "Notify when new posts are received",
                         checked = newPosts,
                         onCheckedChange = { newPosts = it },
-                        color = NeoPurple,
+                        color = MaterialTheme.colorScheme.primary,
                         enabled = enableNotifications
                     )
                 }
@@ -258,7 +259,7 @@ fun NotificationSettingsScreen(
                         subtitle = "Notify when new peers connect",
                         checked = newPeers,
                         onCheckedChange = { newPeers = it },
-                        color = NeoCyan,
+                        color = MaterialTheme.colorScheme.secondary,
                         enabled = enableNotifications
                     )
                 }
@@ -336,7 +337,7 @@ fun AboutScreen(
                             Text(
                                 text = "✦",
                                 fontSize = 48.sp,
-                                color = NeoPurple
+                                color = MaterialTheme.colorScheme.primary
                             )
                             Text(
                                 text = "NEO",
@@ -388,7 +389,7 @@ fun AboutScreen(
                         icon = Icons.Default.Description,
                         title = "License",
                         subtitle = "MIT License",
-                        color = NeoCyan
+                        color = MaterialTheme.colorScheme.secondary
                     )
                 }
             }
