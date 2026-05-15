@@ -18,3 +18,4 @@ captures
 *.keystore
 *.jks
 .DS_Store
+*.md
