@@ -30,6 +30,21 @@ interface PostDao {
     @Query("SELECT * FROM posts ORDER BY timestamp DESC")
     fun getAllPosts(): Flow<List<Post>>
 
+    @Query("SELECT * FROM posts WHERE authorId = :authorId ORDER BY timestamp DESC")
+    fun getPostsByAuthor(authorId: String): Flow<List<Post>>
+
+    /**
+     * Get all posts once for export and maintenance tasks.
+     */
+    @Query("SELECT * FROM posts ORDER BY timestamp DESC")
+    suspend fun getAllPostsList(): List<Post>
+
+    /**
+     * Get all image hashes currently referenced by posts.
+     */
+    @Query("SELECT imageHash FROM posts WHERE imageHash IS NOT NULL")
+    suspend fun getReferencedImageHashes(): List<String>
+
     /**
      * Get paginated posts for infinite scrolling feed.
      * Returns posts ordered by timestamp (newest first).
@@ -81,6 +96,9 @@ interface PostDao {
     /**
      * Get total post count.
      */
+    @Query("SELECT COUNT(*) FROM posts WHERE authorId = :authorId")
+    fun getPostCountForAuthor(authorId: String): Flow<Int>
+
     @Query("SELECT COUNT(*) FROM posts")
     suspend fun getPostCount(): Int
     

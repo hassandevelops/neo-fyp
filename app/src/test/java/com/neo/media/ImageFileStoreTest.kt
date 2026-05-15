@@ -1,18 +1,26 @@
 package com.neo.media
 
+import android.content.Context
 import io.mockk.*
 import org.junit.Assert.*
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
-import java.io.File
+import org.junit.rules.TemporaryFolder
 
 class ImageFileStoreTest {
 
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
+
+    private lateinit var context: Context
     private lateinit var fileStore: ImageFileStore
 
     @Before
     fun setup() {
-        fileStore = ImageFileStore(mockk(relaxed = true))
+        context = mockk(relaxed = true)
+        every { context.filesDir } returns temporaryFolder.root
+        fileStore = ImageFileStore(context)
     }
 
     @Test
@@ -20,20 +28,16 @@ class ImageFileStoreTest {
         val hash = "abc123def456"
         val data = ByteArray(100)
 
-        // Test exists after save
-        every { fileStore.fileExists(hash) } returns true
-        every { fileStore.save(any(), any()) } returns "/path/to/images/$hash.jpg"
-        every { fileStore.load(any()) } returns data
-
         val path = fileStore.save(hash, data)
+
         assertNotNull(path)
         assertTrue(path?.contains(hash) == true)
+        assertTrue(fileStore.exists(hash))
+        assertArrayEquals(data, fileStore.load(hash))
     }
 
     @Test
     fun `load returns null for non-existent image`() {
-        every { fileStore.load("nonexistent") } returns null
-
         val data = fileStore.load("nonexistent")
 
         assertNull(data)
@@ -41,18 +45,16 @@ class ImageFileStoreTest {
 
     @Test
     fun `exists returns false for unknown hash`() {
-        every { fileStore.fileExists("unknown") } returns false
-
-        assertFalse(fileStore.fileExists("unknown"))
+        assertFalse(fileStore.exists("unknown"))
     }
 
     @Test
     fun `delete removes file`() {
-        every { fileStore.delete(any()) } returns true
+        val hash = "somehash"
+        fileStore.save(hash, ByteArray(10))
 
-        val result = fileStore.delete("somehash")
+        val result = fileStore.delete(hash)
         assertTrue(result)
+        assertFalse(fileStore.exists(hash))
     }
 }
-
-fun ImageFileStore.fileExists(hash: String): Boolean = load(hash) != null

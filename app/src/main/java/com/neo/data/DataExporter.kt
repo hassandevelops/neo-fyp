@@ -6,6 +6,7 @@ import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.neo.data.model.Post
 import com.neo.data.repository.PostRepository
+import com.neo.security.CryptoManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -21,7 +22,8 @@ import javax.inject.Singleton
 @Singleton
 class DataExporter @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val postRepository: PostRepository
+    private val postRepository: PostRepository,
+    private val cryptoManager: CryptoManager
 ) {
     
     companion object {
@@ -176,18 +178,11 @@ class DataExporter @Inject constructor(
      * Get all posts for export (non-reactive).
      */
     private suspend fun getAllPostsForExport(): List<Post> {
-        // This is a simplified version
-        // In real implementation, we'd need a method to get all posts as a list
-        // For now, return empty list as placeholder
-        return emptyList()
+        return postRepository.getAllPostsList()
     }
     
-    /**
-     * Get device ID.
-     * TODO: Inject CryptoManager
-     */
     private fun getDeviceId(): String {
-        return "unknown"
+        return cryptoManager.getDeviceId()
     }
     
     /**

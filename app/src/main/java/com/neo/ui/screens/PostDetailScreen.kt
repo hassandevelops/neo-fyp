@@ -11,7 +11,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,6 +30,7 @@ import kotlinx.coroutines.launch
 fun PostDetailScreen(
     post: Post,
     viewModel: PostDetailViewModel,
+    currentUserName: String,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -40,6 +40,9 @@ fun PostDetailScreen(
     var commentText by remember { mutableStateOf("") }
     var showCommentsSheet by remember { mutableStateOf(false) }
     val hasLiked by viewModel.hasUserLikedPostFlow(post.id).collectAsState(initial = false)
+    val topLevelComments by viewModel
+        .getTopLevelCommentsForPost(post.id)
+        .collectAsState(initial = emptyList())
     val uiState by viewModel.uiState.collectAsState()
 
     LaunchedEffect(Unit) {
@@ -57,9 +60,6 @@ fun PostDetailScreen(
             else -> {}
         }
     }
-    
-    // Mock comment data for now
-    val comments = remember { mutableStateListOf<com.neo.data.model.Comment>() }
     
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
@@ -175,7 +175,7 @@ fun PostDetailScreen(
                                     onClick = {
                                         viewModel.toggleLike(
                                             postId = post.id,
-                                            userName = "Current User",
+                                            userName = currentUserName,
                                             onError = { error: String ->
                                                 scope.launch {
                                                     snackbarHostState.showSnackbar(message = error)
@@ -219,8 +219,6 @@ fun PostDetailScreen(
                     )
                 }
                 
-                // Display existing comments
-                val topLevelComments = comments.filter { it.parentCommentId == null }
                 items(topLevelComments.size) { index ->
                     val comment = topLevelComments[index]
                     Surface(
@@ -248,7 +246,7 @@ fun PostDetailScreen(
                 }
                 
                 // Empty state if no comments
-                if (comments.isEmpty()) {
+                if (topLevelComments.isEmpty()) {
                     item {
                         Text(
                             text = "No comments yet. Be the first to comment!",
@@ -291,21 +289,17 @@ fun PostDetailScreen(
                     IconButton(
                         onClick = {
                             if (commentText.isNotBlank()) {
-                                val newComment = com.neo.data.model.Comment(
-                                    id = "comment_${System.currentTimeMillis()}",
+                                viewModel.createComment(
                                     postId = post.id,
-                                    authorId = "mock_user_id",
-                                    authorName = "Current User",
                                     content = commentText.trim(),
-                                    timestamp = System.currentTimeMillis(),
-                                    signature = "mock_signature",
-                                    publicKey = "mock_public_key",
-                                    ttl = 10,
-                                    firstSeenTimestamp = System.currentTimeMillis(),
-                                    parentCommentId = null
+                                    authorName = currentUserName,
+                                    onSuccess = { commentText = "" },
+                                    onError = { error: String ->
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar(message = error)
+                                        }
+                                    }
                                 )
-                                comments.add(newComment)
-                                commentText = ""
                             }
                         },
                         enabled = commentText.isNotBlank()
@@ -324,25 +318,21 @@ fun PostDetailScreen(
         if (showCommentsSheet) {
             CommentsBottomSheet(
                 postId = post.id,
-                topLevelComments = comments.filter { it.parentCommentId == null },
-                getReplies = { parentId -> comments.filter { it.parentCommentId == parentId } },
+                topLevelComments = topLevelComments,
+                getReplies = { parentId ->
+                    viewModel
+                        .getRepliesForComment(parentId)
+                        .collectAsState(initial = emptyList())
+                        .value
+                },
                 onDismiss = { showCommentsSheet = false },
                 onCommentSubmit = { content, parentCommentId ->
-                    // Add comment to mock list
-                    val newComment = com.neo.data.model.Comment(
-                        id = "comment_${System.currentTimeMillis()}",
+                    viewModel.createComment(
                         postId = post.id,
-                        authorId = "mock_user_id",
-                        authorName = "Current User",
                         content = content,
-                        timestamp = System.currentTimeMillis(),
-                        signature = "mock_signature",
-                        publicKey = "mock_public_key",
-                        ttl = 10,
-                        firstSeenTimestamp = System.currentTimeMillis(),
+                        authorName = currentUserName,
                         parentCommentId = parentCommentId
                     )
-                    comments.add(newComment)
                 }
             )
         }

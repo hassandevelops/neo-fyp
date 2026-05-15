@@ -23,6 +23,20 @@ class PostRepository @Inject constructor(
      */
     fun getAllPosts(): Flow<List<Post>> = postDao.getAllPosts()
 
+    fun getPostsByAuthor(authorId: String): Flow<List<Post>> = postDao.getPostsByAuthor(authorId)
+
+    /**
+     * Get all posts once for non-reactive operations.
+     */
+    suspend fun getAllPostsList(): List<Post> = postDao.getAllPostsList()
+
+    /**
+     * Get all image hashes referenced by posts.
+     */
+    suspend fun getReferencedImageHashes(): Set<String> {
+        return postDao.getReferencedImageHashes().toSet()
+    }
+
     /**
      * Get paginated posts for infinite scrolling.
      */
@@ -96,6 +110,10 @@ class PostRepository @Inject constructor(
     /**
      * Get total post count.
      */
+    fun getPostCountForAuthor(authorId: String): Flow<Int> {
+        return postDao.getPostCountForAuthor(authorId)
+    }
+
     suspend fun getPostCount(): Int {
         return postDao.getPostCount()
     }

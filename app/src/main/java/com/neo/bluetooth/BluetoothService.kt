@@ -35,6 +35,7 @@ import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import com.neo.R
+import com.neo.data.repository.NotificationRepository
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,7 +51,10 @@ import javax.inject.Inject
  */
 @AndroidEntryPoint
 class BluetoothService : Service() {
-    
+
+    @Inject
+    lateinit var notificationRepository: NotificationRepository
+
     companion object {
         private const val TAG = "BluetoothService"
         private const val NOTIFICATION_ID = 1
@@ -482,8 +486,21 @@ class BluetoothService : Service() {
      * Update the connected peers state.
      */
     private fun updateConnectedPeers() {
+        val previousCount = _connectedPeers.value.size
         _connectedPeers.value = connections.keys.toList()
         updateNotification()
+        if (connections.size > previousCount && ::notificationRepository.isInitialized) {
+                serviceScope.launch {
+                notificationRepository.insert(
+                    com.neo.data.model.Notification(
+                        id = UUID.randomUUID().toString(),
+                        type = "peer",
+                        message = "${connections.size} peer(s) connected to your mesh network",
+                        timestamp = System.currentTimeMillis()
+                    )
+                )
+            }
+        }
     }
     
     /**
@@ -518,7 +535,7 @@ class BluetoothService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.bluetooth_service_title))
             .setContentText(contentText)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_notification)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .build()

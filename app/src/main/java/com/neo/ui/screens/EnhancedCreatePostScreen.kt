@@ -76,7 +76,7 @@ fun EnhancedCreatePostScreen(
         modifier = modifier
             .fillMaxSize()
             .background(NeoBlack.copy(alpha = 0.7f))
-            .clickable(enabled = false) {},
+            .clickable { onDismiss() },
         contentAlignment = Alignment.BottomCenter
     ) {
         // ── Sheet ─────────────────────────────────────────────────────────────
@@ -217,8 +217,8 @@ fun EnhancedCreatePostScreen(
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = TextWhite,
                             unfocusedTextColor = TextWhite,
-                            focusedBorderColor = Color.Transparent,
-                            unfocusedBorderColor = Color.Transparent,
+                            focusedBorderColor = NeoLime.copy(alpha = 0.5f),
+                            unfocusedBorderColor = BorderWhite20,
                             cursorColor = NeoLime
                         ),
                         textStyle = LocalTextStyle.current.copy(

@@ -32,6 +32,7 @@ class SyncManager @Inject constructor(
 
     private var bluetoothService: BluetoothService? = null
     private var syncJob: Job? = null
+    private var peerMonitorJob: Job? = null
     private var lastSyncTimestamp = 0L
 
     private val _connectedPeersCount = MutableStateFlow(0)
@@ -49,6 +50,27 @@ class SyncManager @Inject constructor(
         service.onMessageReceived = { peerAddress, message ->
             scope.launch {
                 when (message) {
+                    is Message.Handshake -> {
+                        gossipProtocol.handleHandshake(message, peerAddress)
+                    }
+                    is Message.PostBroadcast -> {
+                        gossipProtocol.handleReceivedPost(message, peerAddress)
+                    }
+                    is Message.CommentBroadcast -> {
+                        gossipProtocol.handleReceivedComment(message, peerAddress)
+                    }
+                    is Message.ReactionBroadcast -> {
+                        gossipProtocol.handleReceivedReaction(message, peerAddress)
+                    }
+                    is Message.ImageMetadata -> {
+                        gossipProtocol.handleImageMetadata(message, peerAddress)
+                    }
+                    is Message.ImageChunk -> {
+                        gossipProtocol.handleImageChunk(message, peerAddress)
+                    }
+                    is Message.Ack -> {
+                        gossipProtocol.handleAck(message)
+                    }
                     is Message.SyncRequest -> {
                         handleSyncRequest(message, peerAddress)
                     }
@@ -67,11 +89,21 @@ class SyncManager @Inject constructor(
     fun setBluetoothService(service: BluetoothService) {
         this.bluetoothService = service
 
+        gossipProtocol.setBluetoothService(service)
         setupMessageRouting(service)
-        
-        scope.launch {
+
+        peerMonitorJob?.cancel()
+        peerMonitorJob = scope.launch {
+            var knownPeers = emptySet<String>()
             service.connectedPeers.collect { peers ->
+                val currentPeers = peers.toSet()
                 _connectedPeersCount.value = peers.size
+                currentPeers
+                    .minus(knownPeers)
+                    .forEach { peerAddress ->
+                        gossipProtocol.sendHandshake(peerAddress)
+                    }
+                knownPeers = currentPeers
             }
         }
 
@@ -83,6 +115,7 @@ class SyncManager @Inject constructor(
      */
     fun stop() {
         syncJob?.cancel()
+        peerMonitorJob?.cancel()
     }
     
     /**
@@ -147,6 +180,10 @@ class SyncManager @Inject constructor(
                 authorId = post.authorId,
                 authorName = post.authorName,
                 content = post.content,
+                imageHash = post.imageHash,
+                imageSize = post.imageSize,
+                imageWidth = post.imageWidth,
+                imageHeight = post.imageHeight,
                 timestamp = post.timestamp,
                 signature = post.signature,
                 publicKey = post.publicKey,

@@ -173,7 +173,11 @@ class RateLimiter @Inject constructor() {
      * @param commentsPerWindow Number of comments allowed per window
      * @param windowMs Window size in milliseconds
      */
-    fun configure(postsPerWindow: Int, commentsPerWindow: Int = DEFAULT_COMMENT_LIMIT, windowMs: Long = DEFAULT_WINDOW_MS) {
+    fun configure(
+        postsPerWindow: Int,
+        windowMs: Long = DEFAULT_WINDOW_MS,
+        commentsPerWindow: Int = DEFAULT_COMMENT_LIMIT
+    ) {
         this.postLimit = postsPerWindow
         this.commentLimit = commentsPerWindow
         this.windowMs = windowMs
@@ -230,8 +234,8 @@ class RateLimiter @Inject constructor() {
     /**
      * Get current configuration.
      */
-    fun getConfig(): Triple<Int, Int, Long> {
-        return Triple(postLimit, commentLimit, windowMs)
+    fun getConfig(): Pair<Int, Long> {
+        return postLimit to windowMs
     }
 
     /**

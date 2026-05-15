@@ -1,5 +1,10 @@
 package com.neo.ui.navigation
 
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -17,6 +22,7 @@ import com.neo.ui.components.EnhancedBottomNavigation
 import com.neo.ui.screens.*
 import com.neo.ui.viewmodel.CreatePostViewModel
 import com.neo.ui.viewmodel.FeedViewModel
+import com.neo.ui.viewmodel.NotificationsViewModel
 import com.neo.ui.viewmodel.ProfileViewModel
 import androidx.hilt.navigation.compose.hiltViewModel
 import kotlinx.coroutines.launch
@@ -51,10 +57,8 @@ fun EnhancedNeoNavigation(
                     selectedRoute = currentRoute,
                     onFabClick = { navController.navigate("create_post") },
                     onNavigate = { route ->
-                        navController.navigate(route) {
-                            popUpTo("feed") { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
+                        if (!navController.popBackStack(route, inclusive = false)) {
+                            navController.navigate(route)
                         }
                     }
                 )
@@ -68,7 +72,13 @@ fun EnhancedNeoNavigation(
             modifier = modifier.padding(paddingValues)
         ) {
             // Onboarding
-            composable("onboarding") {
+            composable(
+                "onboarding",
+                enterTransition = { fadeIn(animationSpec = tween(0)) },
+                exitTransition = { fadeOut(animationSpec = tween(0)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(0)) },
+                popExitTransition = { fadeOut(animationSpec = tween(0)) }
+            ) {
                 OnboardingScreen(
                     onComplete = {
                         userPreferences.isOnboardingComplete = true
@@ -80,15 +90,23 @@ fun EnhancedNeoNavigation(
             }
 
             // Main Feed
-            composable("feed") {
+            composable(
+                "feed",
+                enterTransition = { fadeIn(animationSpec = tween(0)) },
+                exitTransition = { fadeOut(animationSpec = tween(0)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(0)) },
+                popExitTransition = { fadeOut(animationSpec = tween(0)) }
+            ) {
+            val postDetailViewModel: com.neo.ui.viewmodel.PostDetailViewModel = hiltViewModel()
             EnhancedFeedScreen(
                 viewModel = viewModel,
+                postDetailViewModel = postDetailViewModel,
+                currentUserName = userPreferences.userName,
                 onNavigateToProfile = { navController.navigate("profile") },
                 onNavigateToSearch = { navController.navigate("search") },
                 onNavigateToNotifications = { navController.navigate("notifications") },
                 onNavigateToSettings = { navController.navigate("settings") },
                 onNavigateToBLEStatus = { navController.navigate("ble_status") },
-                onNavigateToCreatePost = { navController.navigate("create_post") },
                 onNavigateToPostDetail = { post ->
                     navController.navigate("post_detail/${post.id}")
                 }
@@ -96,7 +114,21 @@ fun EnhancedNeoNavigation(
         }
         
         // Create Post
-        composable("create_post") {
+        composable(
+            "create_post",
+            enterTransition = {
+                slideInVertically(initialOffsetY = { it }, animationSpec = tween(350))
+            },
+            exitTransition = {
+                slideOutVertically(targetOffsetY = { it }, animationSpec = tween(250))
+            },
+            popEnterTransition = {
+                fadeIn(animationSpec = tween(250))
+            },
+            popExitTransition = {
+                fadeOut(animationSpec = tween(250))
+            }
+        ) {
             val createPostViewModel: CreatePostViewModel = hiltViewModel()
             EnhancedCreatePostScreen(
                 viewModel = createPostViewModel,
@@ -113,17 +145,30 @@ fun EnhancedNeoNavigation(
         }
         
         // Profile
-        composable("profile") {
+        composable(
+                "profile",
+                enterTransition = { fadeIn(animationSpec = tween(0)) },
+                exitTransition = { fadeOut(animationSpec = tween(0)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(0)) },
+                popExitTransition = { fadeOut(animationSpec = tween(0)) }
+            ) {
             val profileViewModel: ProfileViewModel = hiltViewModel()
             ProfileScreen(
                 viewModel = profileViewModel,
                 onBack = { navController.popBackStack() },
-                onEditProfile = { navController.navigate("edit_profile") }
+                onEditProfile = { navController.navigate("edit_profile") },
+                onPostClick = { postId -> navController.navigate("post_detail/$postId") }
             )
         }
 
         // Edit Profile
-        composable("edit_profile") {
+        composable(
+                "edit_profile",
+                enterTransition = { fadeIn(animationSpec = tween(0)) },
+                exitTransition = { fadeOut(animationSpec = tween(0)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(0)) },
+                popExitTransition = { fadeOut(animationSpec = tween(0)) }
+            ) {
             val profileViewModel: ProfileViewModel = hiltViewModel()
             val currentName by profileViewModel.profileName.collectAsState()
             val currentBio by profileViewModel.profileBio.collectAsState()
@@ -140,7 +185,13 @@ fun EnhancedNeoNavigation(
         }
         
         // Search
-        composable("search") {
+        composable(
+                "search",
+                enterTransition = { fadeIn(animationSpec = tween(0)) },
+                exitTransition = { fadeOut(animationSpec = tween(0)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(0)) },
+                popExitTransition = { fadeOut(animationSpec = tween(0)) }
+            ) {
             SearchScreen(
                 posts = posts,
                 onPostClick = { post ->
@@ -151,14 +202,28 @@ fun EnhancedNeoNavigation(
         }
         
         // Notifications
-        composable("notifications") {
+        composable(
+                "notifications",
+                enterTransition = { fadeIn(animationSpec = tween(0)) },
+                exitTransition = { fadeOut(animationSpec = tween(0)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(0)) },
+                popExitTransition = { fadeOut(animationSpec = tween(0)) }
+            ) {
+            val notificationsViewModel: NotificationsViewModel = hiltViewModel()
             NotificationsScreen(
+                viewModel = notificationsViewModel,
                 onBack = { navController.popBackStack() }
             )
         }
         
         // Settings
-        composable("settings") {
+        composable(
+                "settings",
+                enterTransition = { fadeIn(animationSpec = tween(0)) },
+                exitTransition = { fadeOut(animationSpec = tween(0)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(0)) },
+                popExitTransition = { fadeOut(animationSpec = tween(0)) }
+            ) {
             SettingsScreen(
                 onBack = { navController.popBackStack() },
                 onNavigateToAccount = { navController.navigate("settings/account") },
@@ -169,32 +234,62 @@ fun EnhancedNeoNavigation(
         }
         
         // Settings Detail Screens
-        composable("settings/account") {
+        composable(
+                "settings/account",
+                enterTransition = { fadeIn(animationSpec = tween(0)) },
+                exitTransition = { fadeOut(animationSpec = tween(0)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(0)) },
+                popExitTransition = { fadeOut(animationSpec = tween(0)) }
+            ) {
             AccountSettingsScreen(
                 onBack = { navController.popBackStack() }
             )
         }
         
-        composable("settings/privacy") {
+        composable(
+                "settings/privacy",
+                enterTransition = { fadeIn(animationSpec = tween(0)) },
+                exitTransition = { fadeOut(animationSpec = tween(0)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(0)) },
+                popExitTransition = { fadeOut(animationSpec = tween(0)) }
+            ) {
             PrivacySettingsScreen(
                 onBack = { navController.popBackStack() }
             )
         }
         
-        composable("settings/notifications") {
+        composable(
+                "settings/notifications",
+                enterTransition = { fadeIn(animationSpec = tween(0)) },
+                exitTransition = { fadeOut(animationSpec = tween(0)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(0)) },
+                popExitTransition = { fadeOut(animationSpec = tween(0)) }
+            ) {
             NotificationSettingsScreen(
                 onBack = { navController.popBackStack() }
             )
         }
         
-        composable("settings/about") {
+        composable(
+                "settings/about",
+                enterTransition = { fadeIn(animationSpec = tween(0)) },
+                exitTransition = { fadeOut(animationSpec = tween(0)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(0)) },
+                popExitTransition = { fadeOut(animationSpec = tween(0)) }
+            ) {
             AboutScreen(
                 onBack = { navController.popBackStack() }
             )
         }
         
         // BLE Mesh Status
-        composable("ble_status") {
+        composable(
+                "ble_status",
+                enterTransition = { fadeIn(animationSpec = tween(0)) },
+                exitTransition = { fadeOut(animationSpec = tween(0)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(0)) },
+                popExitTransition = { fadeOut(animationSpec = tween(0)) }
+            ) {
             BLEMeshStatusScreen(
                 connectedPeers = List(connectedPeersCount) { "Peer $it" },
                 onBack = { navController.popBackStack() }
@@ -204,7 +299,11 @@ fun EnhancedNeoNavigation(
         // Post Detail
         composable(
             route = "post_detail/{postId}",
-            arguments = listOf(navArgument("postId") { type = NavType.StringType })
+            arguments = listOf(navArgument("postId") { type = NavType.StringType }),
+            enterTransition = { fadeIn(animationSpec = tween(0)) },
+            exitTransition = { fadeOut(animationSpec = tween(0)) },
+            popEnterTransition = { fadeIn(animationSpec = tween(0)) },
+            popExitTransition = { fadeOut(animationSpec = tween(0)) }
         ) { backStackEntry ->
             val postId = backStackEntry.arguments?.getString("postId")
             val post = posts.find { it.id == postId }
@@ -214,6 +313,7 @@ fun EnhancedNeoNavigation(
                 PostDetailScreen(
                     post = post,
                     viewModel = postDetailViewModel,
+                    currentUserName = userPreferences.userName,
                     onBack = { navController.popBackStack() }
                 )
             }

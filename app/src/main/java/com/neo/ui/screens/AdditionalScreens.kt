@@ -1,8 +1,11 @@
 package com.neo.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -10,11 +13,18 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.neo.data.model.Notification
 import com.neo.ui.components.GradientBackground
 import com.neo.ui.theme.*
+import java.text.SimpleDateFormat
+import java.util.*
 import androidx.compose.material3.MaterialTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -190,9 +200,12 @@ fun SearchScreen(
 
 @Composable
 fun NotificationsScreen(
+    viewModel: com.neo.ui.viewmodel.NotificationsViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val notifications by viewModel.notifications.collectAsState()
+
     GradientBackground(modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize()) {
             // Header
@@ -214,47 +227,153 @@ fun NotificationsScreen(
                             tint = TextWhite
                         )
                     }
-                    
+
                     Text(
                         text = "Notifications",
                         color = TextWhite,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold
                     )
-                    
-                    IconButton(onClick = { /* Mark all read */ }) {
+
+                    if (notifications.isNotEmpty()) {
+                        IconButton(onClick = { viewModel.markAllAsRead() }) {
+                            Icon(
+                                imageVector = Icons.Default.DoneAll,
+                                contentDescription = "Mark all read",
+                                tint = TextWhite60
+                            )
+                        }
+                    } else {
+                        Spacer(Modifier.size(48.dp))
+                    }
+                }
+            }
+
+            if (notifications.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Icon(
-                            imageVector = Icons.Default.DoneAll,
-                            contentDescription = "Mark all read",
-                            tint = TextWhite60
+                            imageVector = Icons.Default.Notifications,
+                            contentDescription = null,
+                            tint = TextWhite20,
+                            modifier = Modifier.size(64.dp)
+                        )
+                        Text(
+                            text = "No notifications yet",
+                            color = TextWhite40,
+                            fontSize = 16.sp
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(notifications, key = { it.id }) { notification ->
+                        NotificationItem(
+                            notification = notification,
+                            onClick = { viewModel.markAsRead(notification.id) }
                         )
                     }
                 }
             }
-            
-            // Empty state
+        }
+    }
+}
+
+@Composable
+private fun NotificationItem(
+    notification: Notification,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val icon = when (notification.type) {
+        "like" -> Icons.Default.Favorite
+        "comment" -> Icons.Default.Chat
+        "peer" -> Icons.Default.Radio
+        "system" -> Icons.Default.Info
+        else -> Icons.Default.Notifications
+    }
+    val iconColor = when (notification.type) {
+        "like" -> NeoRed
+        "comment" -> NeoLime
+        "peer" -> NeoTeal
+        "system" -> NeoOrange
+        else -> TextWhite60
+    }
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        color = if (notification.isRead) Color.Transparent else NeoGray900.copy(alpha = 0.5f)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Box(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(iconColor.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center
             ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Notifications,
-                        contentDescription = null,
-                        tint = TextWhite20,
-                        modifier = Modifier.size(64.dp)
-                    )
-                    Text(
-                        text = "No notifications yet",
-                        color = TextWhite40,
-                        fontSize = 16.sp
-                    )
-                }
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = iconColor,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = notification.message,
+                    color = if (notification.isRead) TextWhite60 else TextWhite,
+                    fontSize = 14.sp,
+                    fontWeight = if (notification.isRead) FontWeight.Normal else FontWeight.Medium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = formatNotificationTime(notification.timestamp),
+                    color = TextWhite40,
+                    fontSize = 11.sp
+                )
+            }
+
+            if (!notification.isRead) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(NeoLime)
+                )
             }
         }
+    }
+}
+
+private fun formatNotificationTime(timestamp: Long): String {
+    val now = System.currentTimeMillis()
+    val diff = now - timestamp
+    return when {
+        diff < 60_000 -> "Just now"
+        diff < 3600_000 -> "${diff / 60_000}m ago"
+        diff < 86400_000 -> "${diff / 3600_000}h ago"
+        diff < 604800_000 -> "${diff / 86400_000}d ago"
+        else -> SimpleDateFormat("MMM dd", Locale.getDefault()).format(Date(timestamp))
     }
 }
 

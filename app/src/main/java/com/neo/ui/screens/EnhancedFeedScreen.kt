@@ -1,5 +1,6 @@
 package com.neo.ui.screens
 
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -8,136 +9,314 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Radio
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.pullrefresh.PullRefreshIndicator
+import androidx.compose.material.pullrefresh.pullRefresh
+import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material3.*
-import androidx.compose.animation.core.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neo.data.model.Post
 import com.neo.ui.components.*
-import com.neo.ui.components.StoryUser
 import com.neo.ui.theme.*
 import androidx.compose.material3.MaterialTheme
 import com.neo.ui.viewmodel.FeedViewModel
+import com.neo.ui.viewmodel.PostDetailViewModel
+import com.neo.ui.viewmodel.PostStats
 
-/**
- * Enhanced Feed Screen with gradient backgrounds and modern UI
- */
+@OptIn(ExperimentalMaterialApi::class)
 @Composable
 fun EnhancedFeedScreen(
     viewModel: FeedViewModel,
+    postDetailViewModel: PostDetailViewModel,
+    currentUserName: String,
     onNavigateToProfile: () -> Unit,
     onNavigateToSearch: () -> Unit,
     onNavigateToNotifications: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToBLEStatus: () -> Unit,
-    onNavigateToCreatePost: () -> Unit,
     onNavigateToPostDetail: (Post) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val posts by viewModel.posts.collectAsState()
     val connectedPeersCount by viewModel.connectedPeersCount.collectAsState()
-    
-    // State for comments
+    val notificationCount by viewModel.notificationCount.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val postStatsMap by postDetailViewModel.getPostStatsMapFlow(posts.map { it.id })
+        .collectAsState(initial = emptyMap())
     var selectedPostForComments by remember { mutableStateOf<Post?>(null) }
-    val comments = remember { mutableStateListOf<com.neo.data.model.Comment>() }
-    
+
+    val pullRefreshState = rememberPullRefreshState(
+        refreshing = isRefreshing,
+        onRefresh = { viewModel.refresh() }
+    )
+
     Box(modifier = modifier.fillMaxSize()) {
         GradientBackground {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Header
                 EnhancedHeader(
                     onProfileClick = onNavigateToProfile,
                     onSearchClick = onNavigateToSearch,
                     onNotificationsClick = onNavigateToNotifications,
                     onSettingsClick = onNavigateToSettings,
-                    notificationCount = 0
+                    notificationCount = notificationCount
                 )
 
-                // Content
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    // Stories Row
-                    item {
-                        StoryRow(
-                            users = mockStoryUsers,
-                            onStoryClick = { userId ->
-                                // Handle story click
-                            },
-                            onAddStoryClick = {
-                                // Open camera/add story
-                            },
-                            modifier = Modifier.padding(top = 8.dp)
+                when (val state = uiState) {
+                    is FeedViewModel.UiState.Loading -> {
+                        LoadingShimmer()
+                    }
+
+                    is FeedViewModel.UiState.Error -> {
+                        ErrorState(
+                            message = state.message,
+                            onRetry = { viewModel.refresh() }
                         )
                     }
 
-                    // BLE Mesh Status Card
-                    item {
-                        BLEMeshCard(
-                            connectedPeers = connectedPeersCount,
-                            onClick = onNavigateToBLEStatus
-                        )
-                    }
+                    is FeedViewModel.UiState.Success -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pullRefresh(pullRefreshState)
+                        ) {
+                            if (state.isEmpty && posts.isEmpty()) {
+                                EmptyState(onRefresh = { viewModel.refresh() })
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxSize(),
+                                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    // BLE Mesh Status Card
+                                    item {
+                                        BLEMeshCard(
+                                            connectedPeers = connectedPeersCount,
+                                            onClick = onNavigateToBLEStatus
+                                        )
+                                    }
 
-                    // Posts
-                    items(posts) { post ->
-                        EnhancedPostCard(
-                            post = post,
-                            onPostClick = { onNavigateToPostDetail(post) },
-                            onLikeClick = { /* Handle like */ },
-                            onCommentClick = { selectedPostForComments = post }
-                        )
-                    }
+                                    // Posts
+                                    items(posts, key = { it.id }) { post ->
+                                        val stats = postStatsMap[post.id] ?: PostStats()
 
-                    // Bottom padding for nav bar
-                    item {
-                        Spacer(modifier = Modifier.height(90.dp))
+                                        EnhancedPostCard(
+                                            modifier = Modifier.padding(horizontal = 16.dp),
+                                            post = post,
+                                            onPostClick = { onNavigateToPostDetail(post) },
+                                            onLikeClick = {
+                                                postDetailViewModel.toggleLike(
+                                                    postId = post.id,
+                                                    userName = currentUserName
+                                                )
+                                            },
+                                            onCommentClick = { selectedPostForComments = post },
+                                            isLiked = stats.hasLiked,
+                                            likeCount = stats.likeCount,
+                                            commentCount = stats.commentCount
+                                        )
+                                    }
+
+                                    // Bottom padding for nav bar
+                                    item {
+                                        Spacer(modifier = Modifier.height(90.dp))
+                                    }
+                                }
+                            }
+
+                            PullRefreshIndicator(
+                                refreshing = isRefreshing,
+                                state = pullRefreshState,
+                                modifier = Modifier.align(Alignment.TopCenter),
+                                backgroundColor = NeoGray900,
+                                contentColor = NeoLime
+                            )
+                        }
                     }
                 }
             }
         }
-        
     }
-    
+
     // Comments Bottom Sheet
     selectedPostForComments?.let { post ->
+        val topLevelComments by postDetailViewModel
+            .getTopLevelCommentsForPost(post.id)
+            .collectAsState(initial = emptyList())
+
         CommentsBottomSheet(
             postId = post.id,
-            topLevelComments = comments.filter { it.parentCommentId == null && it.postId == post.id },
-            getReplies = { parentId -> comments.filter { it.parentCommentId == parentId } },
+            topLevelComments = topLevelComments,
+            getReplies = { parentId ->
+                postDetailViewModel
+                    .getRepliesForComment(parentId)
+                    .collectAsState(initial = emptyList())
+                    .value
+            },
             onDismiss = { selectedPostForComments = null },
             onCommentSubmit = { content, parentCommentId ->
-                // Add comment to mock list
-                val newComment = com.neo.data.model.Comment(
-                    id = "comment_${System.currentTimeMillis()}",
+                postDetailViewModel.createComment(
                     postId = post.id,
-                    authorId = "mock_user_id",
-                    authorName = "Current User",
                     content = content,
-                    timestamp = System.currentTimeMillis(),
-                    signature = "mock_signature",
-                    publicKey = "mock_public_key",
-                    ttl = 10,
-                    firstSeenTimestamp = System.currentTimeMillis(),
+                    authorName = currentUserName,
                     parentCommentId = parentCommentId
                 )
-                comments.add(newComment)
             }
         )
+    }
+}
+
+@Composable
+private fun LoadingShimmer() {
+    val infiniteTransition = rememberInfiniteTransition(label = "shimmer")
+    val shimmerTranslate by infiniteTransition.animateFloat(
+        initialValue = -300f,
+        targetValue = 900f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmer_translate"
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        repeat(4) {
+            ShimmerCard(
+                brush = Brush.linearGradient(
+                    colors = listOf(
+                        NeoGray800,
+                        NeoGray700,
+                        NeoGray800
+                    ),
+                    start = Offset(shimmerTranslate, 0f),
+                    end = Offset(shimmerTranslate + 200f, 0f)
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun ShimmerCard(brush: Brush) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(320.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = NeoGray900)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(brush)
+        )
+    }
+}
+
+@Composable
+private fun EmptyState(onRefresh: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(48.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            text = "No posts yet",
+            color = TextWhite60,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "Posts from your mesh network will appear here",
+            color = TextWhite40,
+            fontSize = 14.sp,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(24.dp))
+        FilledTonalButton(
+            onClick = onRefresh,
+            colors = ButtonDefaults.filledTonalButtonColors(
+                containerColor = NeoGray800,
+                contentColor = NeoLime
+            )
+        ) {
+            Icon(Icons.Default.Refresh, null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Refresh")
+        }
+    }
+}
+
+@Composable
+private fun ErrorState(
+    message: String,
+    onRetry: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(48.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            Icons.Default.Warning,
+            contentDescription = null,
+            tint = NeoRed,
+            modifier = Modifier.size(48.dp)
+        )
+        Spacer(Modifier.height(16.dp))
+        Text(
+            text = "Something went wrong",
+            color = TextWhite,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = message,
+            color = TextWhite60,
+            fontSize = 14.sp,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(24.dp))
+        FilledTonalButton(
+            onClick = onRetry,
+            colors = ButtonDefaults.filledTonalButtonColors(
+                containerColor = NeoGray800,
+                contentColor = NeoLime
+            )
+        ) {
+            Icon(Icons.Default.Refresh, null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Try again")
+        }
     }
 }
 
@@ -150,6 +329,7 @@ private fun BLEMeshCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
+            .padding(horizontal = 16.dp)
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
@@ -203,7 +383,7 @@ private fun BLEMeshCard(
                             modifier = Modifier.size(24.dp)
                         )
                     }
-                    
+
                     Column {
                         Text(
                             text = "BLE Mesh Network",
@@ -218,9 +398,9 @@ private fun BLEMeshCard(
                         )
                     }
                 }
-                
+
                 Icon(
-                    imageVector = Icons.Default.Add, // ChevronRight
+                    imageVector = Icons.Default.Add,
                     contentDescription = "View",
                     tint = MaterialTheme.colorScheme.secondary,
                     modifier = Modifier.size(20.dp)
@@ -229,15 +409,3 @@ private fun BLEMeshCard(
         }
     }
 }
-
-// Mock data for stories (replace with actual data from ViewModel)
-private val mockStoryUsers = listOf(
-    StoryUser("1", "alice", hasStory = true, isLive = true),
-    StoryUser("2", "bob", hasStory = true),
-    StoryUser("3", "charlie", hasStory = true),
-    StoryUser("4", "diana", hasStory = false),
-    StoryUser("5", "eve", hasStory = true),
-    StoryUser("6", "frank", hasStory = true),
-    StoryUser("7", "grace", hasStory = false),
-    StoryUser("8", "henry", hasStory = true)
-)

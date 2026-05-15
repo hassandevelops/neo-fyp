@@ -75,7 +75,7 @@ fun CommentItem(
                 
                 TextButton(
                     onClick = { onReplyClick(comment) },
-                    modifier = Modifier.height(32.dp)
+                    modifier = Modifier.height(40.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Reply,

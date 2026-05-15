@@ -4,6 +4,7 @@ import android.content.Context
 import com.neo.data.dao.BlockedUserDao
 import com.neo.data.dao.CommentDao
 import com.neo.data.dao.DeviceDao
+import com.neo.data.dao.NotificationDao
 import com.neo.data.dao.PostDao
 import com.neo.data.dao.ReactionDao
 import com.neo.data.db.AppDatabase
@@ -52,5 +53,10 @@ object DatabaseModule {
     @Provides
     fun provideReactionDao(database: AppDatabase): ReactionDao {
         return database.reactionDao()
+    }
+
+    @Provides
+    fun provideNotificationDao(database: AppDatabase): NotificationDao {
+        return database.notificationDao()
     }
 }

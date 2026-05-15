@@ -161,7 +161,7 @@ class PostDaoTest {
         // Act
         val updatedPost = originalPost.copy(
             content = "Updated",
-            imageData = "base64imagedata"
+            imageHash = "image-hash"
         )
         postDao.update(updatedPost)
         val retrieved = postDao.getPostById("post-1")
@@ -169,7 +169,7 @@ class PostDaoTest {
         // Assert
         assertNotNull(retrieved)
         assertEquals("Updated", retrieved!!.content)
-        assertEquals("base64imagedata", retrieved.imageData)
+        assertEquals("image-hash", retrieved.imageHash)
     }
     
     @Test
@@ -197,8 +197,6 @@ class PostDaoTest {
             authorId = "test-author",
             authorName = "Test Author",
             content = content,
-            imageUri = null,
-            imageData = null,
             imageHash = null,
             imageSize = null,
             imageWidth = null,

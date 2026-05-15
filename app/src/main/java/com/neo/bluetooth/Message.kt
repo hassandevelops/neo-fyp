@@ -33,7 +33,11 @@ sealed class Message {
         val timestamp: Long,
         val signature: String,
         val publicKey: String,
-        val ttl: Int
+        val ttl: Int,
+        val imageHash: String? = null,
+        val imageSize: Int? = null,
+        val imageWidth: Int? = null,
+        val imageHeight: Int? = null
     ) : Message()
 
     /**

@@ -35,6 +35,7 @@ class SyncManagerTest {
     fun `setBluetoothService wires message routing`() = runBlocking {
         val service = mockk<BluetoothService>(relaxed = true)
         every { service.onMessageReceived = any() } just Runs
+        every { service.connectedPeers } returns MutableStateFlow(emptyList())
 
         syncManager.setBluetoothService(service)
 

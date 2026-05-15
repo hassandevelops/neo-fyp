@@ -36,6 +36,7 @@ object MessageProtocol {
 
     private val jsonWithPolymorphism = Json {
         serializersModule = messageSerializersModule
+        classDiscriminator = "kind"
         ignoreUnknownKeys = true
         encodeDefaults = true
         prettyPrint = false

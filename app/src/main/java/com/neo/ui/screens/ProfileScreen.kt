@@ -1,7 +1,7 @@
 package com.neo.ui.screens
 
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -19,9 +21,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.neo.R
 import com.neo.ui.components.GradientBackground
 import com.neo.ui.theme.*
 import androidx.compose.material3.MaterialTheme
@@ -35,11 +39,15 @@ fun ProfileScreen(
     viewModel: com.neo.ui.viewmodel.ProfileViewModel,
     onBack: () -> Unit,
     onEditProfile: () -> Unit = {},
+    onPostClick: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val profileName by viewModel.profileName.collectAsState()
     val profileBio by viewModel.profileBio.collectAsState()
-    val deviceId = viewModel.deviceId
+    val handle by viewModel.handle.collectAsState()
+    val postCount by viewModel.postCount.collectAsState()
+    val nodeCount by viewModel.connectedPeersCount.collectAsState()
+    val userPosts by viewModel.userPosts.collectAsState()
     GradientBackground(modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize()) {
             // Header
@@ -83,7 +91,8 @@ fun ProfileScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(16.dp),
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // Profile Card
@@ -127,11 +136,10 @@ fun ProfileScreen(
                                     .background(NeoGray800, CircleShape),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Person,
+                                Image(
+                                    painter = painterResource(id = R.drawable.splash),
                                     contentDescription = "Profile",
-                                    tint = TextWhite60,
-                                    modifier = Modifier.size(52.dp)
+                                    modifier = Modifier.size(60.dp)
                                 )
                             }
                             
@@ -146,7 +154,7 @@ fun ProfileScreen(
                             )
                             
                             Text(
-                                text = "@neouser",
+                                text = handle,
                                 color = NeoLime,
                                 fontSize = 14.sp
                             )
@@ -176,9 +184,9 @@ fun ProfileScreen(
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        StatItem(label = "PULSES",     value = "0")
+                        StatItem(label = "PULSES",     value = postCount.toString())
                         Box(modifier = Modifier.width(1.dp).height(32.dp).background(BorderWhite20))
-                        StatItem(label = "NODES",      value = "0")
+                        StatItem(label = "NODES",      value = nodeCount.toString())
                         Box(modifier = Modifier.width(1.dp).height(32.dp).background(BorderWhite20))
                         StatItem(label = "FOLLOWERS",  value = "0")
                     }
@@ -224,26 +232,113 @@ fun ProfileScreen(
                     }
                 ) {
                     Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 },
-                        text = { Text("Posts",        color = if (selectedTab == 0) NeoLime else TextWhite40) })
+                        text = { Text("Posts", color = if (selectedTab == 0) NeoLime else TextWhite40) })
                     Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 },
-                        text = { Text("Media",        color = if (selectedTab == 1) NeoLime else TextWhite40) })
-                    Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 },
-                        text = { Text("Mesh Network", color = if (selectedTab == 2) NeoLime else TextWhite40) })
+                        text = { Text("Media", color = if (selectedTab == 1) NeoLime else TextWhite40) })
                 }
-                
-                // Empty state
+
+                val displayedPosts = if (selectedTab == 1) {
+                    userPosts.filter { it.imageHash != null }
+                } else {
+                    userPosts
+                }
+
+                if (displayedPosts.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(200.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (selectedTab == 1) "No media yet" else "No posts yet",
+                            color = TextWhite40,
+                            fontSize = 14.sp
+                        )
+                    }
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(2),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(displayedPosts, key = { it.id }) { post ->
+                            PostGridItem(
+                                post = post,
+                                onClick = { onPostClick(post.id) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PostGridItem(
+    post: com.neo.data.model.Post,
+    onClick: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val imagePath = post.imageHash?.let {
+        java.io.File(context.filesDir, "images/$it.jpg").takeIf { f -> f.exists() }
+    }
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = NeoGray800)
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (imagePath != null) {
+                Image(
+                    painter = coil.compose.rememberAsyncImagePainter(model = imagePath),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                )
+            } else {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
+                        .fillMaxSize()
+                        .padding(12.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "No posts yet",
-                        color = TextWhite40,
-                        fontSize = 14.sp
+                        text = post.content.take(80),
+                        color = TextWhite60,
+                        fontSize = 12.sp,
+                        maxLines = 3,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                 }
+            }
+
+            // Like count overlay
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(8.dp)
+                    .background(NeoBlack.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.FavoriteBorder,
+                    contentDescription = null,
+                    tint = TextWhite80,
+                    modifier = Modifier.size(11.dp)
+                )
+                Text(
+                    text = "0",
+                    color = TextWhite80,
+                    fontSize = 10.sp
+                )
             }
         }
     }

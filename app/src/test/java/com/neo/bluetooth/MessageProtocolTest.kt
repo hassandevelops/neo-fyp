@@ -25,7 +25,7 @@ class MessageProtocolTest {
 
     @Test
     fun `deserialize Handshake recovers object`() {
-        val json = """{"type":"Handshake","deviceId":"dev1","deviceName":"Alice","publicKey":"pk1"}"""
+        val json = """{"kind":"handshake","deviceId":"dev1","deviceName":"Alice","publicKey":"pk1"}"""
         val msg = protocol.deserialize(json)
         assertTrue(msg is Message.Handshake)
         msg as Message.Handshake

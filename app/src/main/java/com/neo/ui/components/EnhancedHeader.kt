@@ -1,6 +1,7 @@
 package com.neo.ui.components
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,7 +18,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.neo.R
 import com.neo.ui.theme.*
+import androidx.compose.ui.res.painterResource
 
 /**
  * App header — profile avatar on left, "Neo" wordmark, bell on right.
@@ -32,12 +35,16 @@ fun EnhancedHeader(
     notificationCount: Int = 0,
     modifier: Modifier = Modifier
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "badge")
-    val badgeAlpha by infiniteTransition.animateFloat(
-        initialValue = 1f, targetValue = 0.4f,
-        animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse),
-        label = "badge_alpha"
-    )
+    val badgeAlpha by if (notificationCount > 0) {
+        val t = rememberInfiniteTransition(label = "badge")
+        t.animateFloat(
+            initialValue = 1f, targetValue = 0.4f,
+            animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse),
+            label = "badge_alpha"
+        )
+    } else {
+        remember { mutableFloatStateOf(0f) }
+    }
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -74,12 +81,10 @@ fun EnhancedHeader(
                     )
                 }
 
-                Text(
-                    text = "Neo",
-                    color = TextWhite,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp
+                Image(
+                    painter = painterResource(id = R.drawable.splash),
+                    contentDescription = "Neo",
+                    modifier = Modifier.height(76.dp)
                 )
             }
 

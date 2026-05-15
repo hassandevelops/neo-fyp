@@ -1,14 +1,14 @@
 package com.neo.ui.screens
 
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -16,16 +16,27 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.neo.R
 import com.neo.ui.theme.*
+import androidx.compose.ui.res.painterResource
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
- * BLE Mesh Status Screen with network topology visualization
+ * BLE Mesh Status Screen – "Neo Mesh Status" with orbital animation and 2×2 stat grid.
+ * Matches the dark-mode isometric design mockup.
  */
 @Composable
 fun BLEMeshStatusScreen(
@@ -33,303 +44,311 @@ fun BLEMeshStatusScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "sync_rotation")
-    val rotation by infiniteTransition.animateFloat(
+    // ── Animations ───────────────────────────────────────────────────────
+    val infiniteTransition = rememberInfiniteTransition(label = "orbit_anim")
+
+    val orbitProgress by infiniteTransition.animateFloat(
         initialValue = 0f,
-        targetValue = 360f,
+        targetValue = (2 * Math.PI).toFloat(),
         animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = LinearEasing),
+            animation = tween(8000, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
-        label = "rotation"
+        label = "orbit_progress"
     )
-    
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.2f,
+
+    val glowPulse by infiniteTransition.animateFloat(
+        initialValue = 0.5f,
+        targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = FastOutSlowInEasing),
+            animation = tween(1500, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "pulse"
+        label = "glow_pulse"
     )
-    
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(NeoBlack)
     ) {
-        // Animated wave background
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            NeoPurple.copy(alpha = 0.3f),
-                            NeoCyan.copy(alpha = 0.2f),
-                            Color.Transparent
-                        )
-                    )
-                )
-        )
-        
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Header
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = NeoBlack.copy(alpha = 0.5f)
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // ── Top App Bar ──────────────────────────────────────────────
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                // Left: NEO brand
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.clickable(onClick = onBack),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowBack,
-                            contentDescription = "Back",
-                            tint = TextWhite
-                        )
-                    }
-                    
-                    Text(
-                        text = "BLE Mesh Network",
-                        color = TextWhite,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold
+                    Image(
+                        painter = painterResource(id = R.drawable.splash),
+                        contentDescription = "Neo logo",
+                        modifier = Modifier.size(76.dp)
                     )
-                    
-                    // Status badge
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = NeoCyan.copy(alpha = 0.1f),
-                        border = BorderStroke(1.dp, NeoCyan.copy(alpha = 0.3f))
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(NeoCyan)
+                }
+
+                // Right: Bell
+                Icon(
+                    imageVector = Icons.Default.Notifications,
+                    contentDescription = "Notifications",
+                    tint = TextWhite60,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            // ── Title ────────────────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp),
+                horizontalAlignment = Alignment.Start
+            ) {
+                Text(
+                    text = "Neo Mesh Status",
+                    color = TextWhite,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "System Diagnostic & Topology",
+                    color = TextWhite40,
+                    fontSize = 14.sp
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // ── Orbital Canvas ───────────────────────────────────────────
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(220.dp)
+                    .drawBehind {
+                        val cx = size.width / 2f
+                        val cy = size.height / 2f
+
+                        // ── Central glow ──
+                        val glowRadius = 55f * glowPulse
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    NeoLime.copy(alpha = 0.45f * glowPulse),
+                                    NeoLime.copy(alpha = 0.15f * glowPulse),
+                                    Color.Transparent
+                                ),
+                                center = Offset(cx, cy),
+                                radius = glowRadius * 2.5f
+                            ),
+                            radius = glowRadius * 2.5f,
+                            center = Offset(cx, cy)
+                        )
+
+                        // Inner solid core
+                        drawCircle(
+                            color = NeoLime,
+                            radius = 14f,
+                            center = Offset(cx, cy)
+                        )
+                        // Outer glow ring
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    NeoLime.copy(alpha = 0.7f * glowPulse),
+                                    NeoLime.copy(alpha = 0.0f)
+                                ),
+                                center = Offset(cx, cy),
+                                radius = 32f
+                            ),
+                            radius = 32f,
+                            center = Offset(cx, cy)
+                        )
+
+                        // ── Orbits (3 tilted ellipses) ──
+                        val dashEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 15f), 0f)
+                        data class OrbitSpec(
+                            val rx: Float,
+                            val ry: Float,
+                            val rotation: Float,
+                            val satAngleOffset: Float
+                        )
+
+                        val orbits = listOf(
+                            OrbitSpec(rx = 160f, ry = 60f, rotation = -15f, satAngleOffset = 0f),
+                            OrbitSpec(rx = 200f, ry = 75f, rotation = 10f, satAngleOffset = 2.1f),
+                            OrbitSpec(rx = 240f, ry = 90f, rotation = -5f, satAngleOffset = 4.2f)
+                        )
+
+                        for (orbit in orbits) {
+                            withTransform({
+                                translate(cx - orbit.rx, cy - orbit.ry)
+                                rotate(
+                                    degrees = orbit.rotation,
+                                    pivot = Offset(orbit.rx, orbit.ry)
+                                )
+                            }) {
+                                drawOval(
+                                    color = TextWhite20,
+                                    topLeft = Offset.Zero,
+                                    size = Size(orbit.rx * 2f, orbit.ry * 2f),
+                                    style = Stroke(
+                                        width = 1.5f,
+                                        pathEffect = dashEffect
+                                    )
+                                )
+                            }
+
+                            // Satellite dot
+                            val angle = orbitProgress + orbit.satAngleOffset
+                            val rad = Math.toRadians(orbit.rotation.toDouble())
+                            val baseX = orbit.rx * cos(angle)
+                            val baseY = orbit.ry * sin(angle)
+                            // apply rotation transform manually
+                            val sx = cx + (baseX * cos(rad) - baseY * sin(rad)).toFloat()
+                            val sy = cy + (baseX * sin(rad) + baseY * cos(rad)).toFloat()
+
+                            // Small glow behind satellite
+                            drawCircle(
+                                brush = Brush.radialGradient(
+                                    colors = listOf(
+                                        NeoLime.copy(alpha = 0.5f),
+                                        Color.Transparent
+                                    ),
+                                    center = Offset(sx, sy),
+                                    radius = 14f
+                                ),
+                                radius = 14f,
+                                center = Offset(sx, sy)
                             )
-                            Text(
-                                text = "ACTIVE",
-                                color = NeoCyan,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
+                            drawCircle(
+                                color = NeoLime,
+                                radius = 5f,
+                                center = Offset(sx, sy)
                             )
                         }
                     }
-                }
-            }
-            
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+            )
+
+            Spacer(Modifier.height(12.dp))
+
+            // ── Pager Indicator ──────────────────────────────────────────
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Central Sync Icon
-                item {
+                repeat(5) { index ->
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 24.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Box(
-                            modifier = Modifier.size(128.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            // Pulse rings
-                            repeat(3) { index ->
-                                Box(
-                                    modifier = Modifier
-                                        .size((80 + index * 40).dp)
-                                        .border(
-                                            2.dp,
-                                            NeoCyan.copy(alpha = 0.3f - index * 0.1f),
-                                            CircleShape
-                                        )
-                                )
-                            }
-                            
-                            // Center icon
-                            Box(
-                                modifier = Modifier
-                                    .size(80.dp)
-                                    .clip(CircleShape)
-                                    .background(
-                                        brush = Brush.linearGradient(
-                                            colors = listOf(NeoCyan, NeoPurple, NeoPink)
-                                        )
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = "Syncing",
-                                    tint = TextWhite,
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .rotate(rotation)
-                                )
-                            }
-                        }
-                    }
-                }
-                
-                // Status text
-                item {
-                    Text(
-                        text = if (connectedPeers.isNotEmpty()) "Syncing mesh network..." else "Network idle",
-                        color = if (connectedPeers.isNotEmpty()) NeoCyan else TextWhite60,
-                        fontSize = 16.sp,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                }
-                
-                // Metrics Grid
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        MetricCard(
-                            icon = Icons.Default.People,
-                            label = "Nearby Devices",
-                            value = connectedPeers.size.toString(),
-                            color = NeoCyan,
-                            modifier = Modifier.weight(1f)
-                        )
-                        MetricCard(
-                            icon = Icons.Default.Schedule,
-                            label = "Last Sync",
-                            value = "0s ago",
-                            color = NeoPurple,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-                
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        MetricCard(
-                            icon = Icons.Default.Speed,
-                            label = "Data Rate",
-                            value = "0 kb/s",
-                            color = NeoPink,
-                            modifier = Modifier.weight(1f)
-                        )
-                        MetricCard(
-                            icon = Icons.Default.SignalCellularAlt,
-                            label = "Signal Quality",
-                            value = "Good",
-                            color = StatusOnline,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-                
-                // Network Topology
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = SurfaceWhite5
-                        )
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Radio,
-                                        contentDescription = null,
-                                        tint = NeoCyan,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Text(
-                                        text = "Network Topology",
-                                        color = TextWhite,
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                                
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = StatusOnline.copy(alpha = 0.1f),
-                                    border = BorderStroke(1.dp, StatusOnline.copy(alpha = 0.3f))
-                                ) {
-                                    Text(
-                                        text = "${connectedPeers.size} Online",
-                                        color = StatusOnline,
-                                        fontSize = 12.sp,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                    )
-                                }
-                            }
-                            
-                            if (connectedPeers.isEmpty()) {
-                                Text(
-                                    text = "No peers connected",
-                                    color = TextWhite40,
-                                    fontSize = 14.sp,
-                                    modifier = Modifier.padding(vertical = 16.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-                
-                // Device list
-                items(connectedPeers) { peer ->
-                    DeviceNodeCard(
-                        deviceName = peer,
-                        rssi = -50,
-                        isOnline = true
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(if (index == 0) NeoLime else TextWhite20)
                     )
                 }
             }
+
+            Spacer(Modifier.height(24.dp))
+
+            // ── 2×2 Metrics Grid ─────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Row 1
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    StatCard(
+                        backgroundColor = NeoCardTeal,
+                        icon = Icons.Default.Hub,
+                        title = "Active Nodes",
+                        mainValue = connectedPeers.size.toString(),
+                        subValue = "/ 32",
+                        badgeText = "Optimal",
+                        badgeBackgroundColor = SurfaceWhite20,
+                        badgeTextColor = TextWhite80,
+                        showProgressBar = false,
+                        modifier = Modifier.weight(1f)
+                    )
+                    StatCard(
+                        backgroundColor = NeoGray900,
+                        icon = Icons.Default.BarChart,
+                        title = "",
+                        mainValue = "1.2",
+                        subValue = " MB/s",
+                        badgeText = null,
+                        showProgressBar = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // Row 2
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    StatCard(
+                        backgroundColor = NeoGray900,
+                        icon = Icons.Default.GraphicEq,
+                        title = "Avg Latency",
+                        mainValue = "1",
+                        subValue = "",
+                        badgeText = null,
+                        showProgressBar = false,
+                        modifier = Modifier.weight(1f)
+                    )
+                    StatCard(
+                        backgroundColor = NeoGray900,
+                        icon = Icons.Default.Sensors,
+                        title = "",
+                        mainValue = "34",
+                        subValue = " MB/s",
+                        badgeText = "Optimal",
+                        badgeBackgroundColor = Color(0xFF3D2E1A),
+                        badgeTextColor = NeoOrange,
+                        showProgressBar = false,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
         }
     }
 }
 
+// ── Reusable Stat Card ──────────────────────────────────────────────────────
 @Composable
-private fun MetricCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    value: String,
-    color: Color,
+private fun StatCard(
+    backgroundColor: Color,
+    icon: ImageVector,
+    title: String,
+    mainValue: String,
+    subValue: String,
+    badgeText: String?,
+    badgeBackgroundColor: Color = SurfaceWhite20,
+    badgeTextColor: Color = TextWhite80,
+    showProgressBar: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Card(
         modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = SurfaceWhite5
-        )
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = backgroundColor)
     ) {
         Column(
             modifier = Modifier
@@ -337,95 +356,82 @@ private fun MetricCard(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(color.copy(alpha = 0.2f)),
-                contentAlignment = Alignment.Center
+            // Top row: icon + optional badge
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = color,
-                    modifier = Modifier.size(16.dp)
+                    tint = TextWhite60,
+                    modifier = Modifier.size(20.dp)
+                )
+
+                if (badgeText != null) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = badgeBackgroundColor
+                    ) {
+                        Text(
+                            text = badgeText,
+                            color = badgeTextColor,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            }
+
+            // Title (if any)
+            if (title.isNotEmpty()) {
+                Text(
+                    text = title,
+                    color = TextWhite60,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
                 )
             }
-            
-            Text(
-                text = label,
-                color = TextWhite40,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Medium
-            )
-            
-            Text(
-                text = value,
-                color = TextWhite,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold
-            )
-        }
-    }
-}
 
-@Composable
-private fun DeviceNodeCard(
-    deviceName: String,
-    rssi: Int,
-    isOnline: Boolean,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = SurfaceWhite5
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+            // Main value + sub value
             Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Bottom
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .clip(CircleShape)
-                        .background(if (isOnline) StatusOnline else StatusOffline)
+                Text(
+                    text = mainValue,
+                    color = TextWhite,
+                    fontSize = 32.sp,
+                    fontWeight = FontWeight.Bold
                 )
-                
-                Column {
+                if (subValue.isNotEmpty()) {
                     Text(
-                        text = deviceName,
-                        color = TextWhite,
-                        fontSize = 14.sp
-                    )
-                    Text(
-                        text = "RSSI: $rssi dBm",
+                        text = subValue,
                         color = TextWhite40,
-                        fontSize = 12.sp
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(bottom = 4.dp)
                     )
                 }
             }
-            
-            // Signal strength bars
-            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                repeat(4) { index ->
+
+            // Optional progress bar
+            if (showProgressBar) {
+                Spacer(Modifier.height(2.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(SurfaceWhite10)
+                ) {
                     Box(
                         modifier = Modifier
-                            .width(4.dp)
-                            .height((8 + index * 4).dp)
+                            .fillMaxWidth(0.6f)
+                            .fillMaxHeight()
                             .clip(RoundedCornerShape(2.dp))
-                            .background(
-                                if (Math.abs(rssi) < 50 + index * 10) NeoCyan else SurfaceWhite20
-                            )
+                            .background(NeoLime)
                     )
                 }
             }

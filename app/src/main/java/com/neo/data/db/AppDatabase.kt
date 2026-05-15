@@ -5,16 +5,19 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.neo.data.dao.DeviceDao
 import com.neo.data.dao.PostDao
 import com.neo.data.dao.BlockedUserDao
 import com.neo.data.dao.CommentDao
+import com.neo.data.dao.NotificationDao
 import com.neo.data.dao.ReactionDao
 import com.neo.data.model.Device
 import com.neo.data.model.Post
 import com.neo.data.model.BlockedUser
 import com.neo.data.model.Comment
 import com.neo.data.model.Reaction
+import com.neo.data.model.Notification
 
 /**
  * Room database for Neo app.
@@ -26,9 +29,10 @@ import com.neo.data.model.Reaction
         Device::class,
         BlockedUser::class,
         Comment::class,
-        Reaction::class
+        Reaction::class,
+        Notification::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -38,6 +42,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun blockedUserDao(): BlockedUserDao
     abstract fun commentDao(): CommentDao
     abstract fun reactionDao(): ReactionDao
+    abstract fun notificationDao(): NotificationDao
 
     companion object {
         const val DATABASE_NAME = "neo_database"
@@ -92,39 +97,135 @@ abstract class AppDatabase : RoomDatabase() {
         // Migration from version 4 to 5 - Add reactions table
         private val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
-                database.execSQL("""
-                    CREATE TABLE IF NOT EXISTS reactions (
-                        id TEXT NOT NULL PRIMARY KEY,
-                        postId TEXT NOT NULL,
-                        authorId TEXT NOT NULL,
-                        authorName TEXT NOT NULL,
-                        reactionType TEXT NOT NULL,
-                        timestamp INTEGER NOT NULL,
-                        signature TEXT NOT NULL,
-                        publicKey TEXT NOT NULL,
-                        FOREIGN KEY(postId) REFERENCES posts(id) ON DELETE CASCADE
-                    )
-                """.trimIndent())
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_reactions_postId ON reactions(postId)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_reactions_authorId ON reactions(authorId)")
+                createCurrentReactionsTable(database)
             }
         }
 
         // Migration from version 5 to 6 - Remove deprecated imageData/imageUri columns
         private val MIGRATION_5_6 = object : Migration(5, 6) {
-            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
-                // Check if old columns exist and remove them (they were replaced by imageHash)
-                try {
-                    database.execSQL("ALTER TABLE posts DROP COLUMN imageData")
-                } catch (e: Exception) {
-                    // Column may not exist, ignore
+            override fun migrate(database: SupportSQLiteDatabase) {
+                val postColumns = getTableColumns(database, "posts")
+                if ("imageData" in postColumns || "imageUri" in postColumns) {
+                    database.execSQL("""
+                        CREATE TABLE IF NOT EXISTS posts_new (
+                            id TEXT NOT NULL PRIMARY KEY,
+                            authorId TEXT NOT NULL,
+                            authorName TEXT NOT NULL,
+                            content TEXT NOT NULL,
+                            imageHash TEXT,
+                            imageSize INTEGER,
+                            imageWidth INTEGER,
+                            imageHeight INTEGER,
+                            timestamp INTEGER NOT NULL,
+                            signature TEXT NOT NULL,
+                            publicKey TEXT NOT NULL,
+                            ttl INTEGER NOT NULL,
+                            firstSeenTimestamp INTEGER NOT NULL
+                        )
+                    """.trimIndent())
+                    database.execSQL("""
+                        INSERT INTO posts_new (
+                            id, authorId, authorName, content, imageHash, imageSize, imageWidth,
+                            imageHeight, timestamp, signature, publicKey, ttl, firstSeenTimestamp
+                        )
+                        SELECT
+                            id, authorId, authorName, content, imageHash, imageSize, imageWidth,
+                            imageHeight, timestamp, signature, publicKey, ttl, firstSeenTimestamp
+                        FROM posts
+                    """.trimIndent())
+                    database.execSQL("DROP TABLE posts")
+                    database.execSQL("ALTER TABLE posts_new RENAME TO posts")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_posts_timestamp ON posts(timestamp)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_posts_authorId ON posts(authorId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_posts_firstSeenTimestamp ON posts(firstSeenTimestamp)")
                 }
-                try {
-                    database.execSQL("ALTER TABLE posts DROP COLUMN imageUri")
-                } catch (e: Exception) {
-                    // Column may not exist, ignore
+
+                val reactionColumns = getTableColumns(database, "reactions")
+                if (reactionColumns.isNotEmpty() && "userId" !in reactionColumns) {
+                    database.execSQL("""
+                        CREATE TABLE IF NOT EXISTS reactions_new (
+                            id TEXT NOT NULL PRIMARY KEY,
+                            postId TEXT NOT NULL,
+                            userId TEXT NOT NULL,
+                            userName TEXT NOT NULL,
+                            type TEXT NOT NULL,
+                            timestamp INTEGER NOT NULL,
+                            signature TEXT NOT NULL,
+                            publicKey TEXT NOT NULL,
+                            ttl INTEGER NOT NULL,
+                            firstSeenTimestamp INTEGER NOT NULL,
+                            FOREIGN KEY(postId) REFERENCES posts(id) ON DELETE CASCADE
+                        )
+                    """.trimIndent())
+                    database.execSQL("""
+                        INSERT INTO reactions_new (
+                            id, postId, userId, userName, type, timestamp, signature, publicKey,
+                            ttl, firstSeenTimestamp
+                        )
+                        SELECT
+                            id, postId, authorId, authorName, reactionType, timestamp, signature,
+                            publicKey, 5, timestamp
+                        FROM reactions
+                    """.trimIndent())
+                    database.execSQL("DROP TABLE reactions")
+                    database.execSQL("ALTER TABLE reactions_new RENAME TO reactions")
+                    createCurrentReactionIndexes(database)
                 }
             }
+        }
+
+        private fun createCurrentReactionsTable(database: SupportSQLiteDatabase) {
+            database.execSQL("""
+                CREATE TABLE IF NOT EXISTS reactions (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    postId TEXT NOT NULL,
+                    userId TEXT NOT NULL,
+                    userName TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    signature TEXT NOT NULL,
+                    publicKey TEXT NOT NULL,
+                    ttl INTEGER NOT NULL,
+                    firstSeenTimestamp INTEGER NOT NULL,
+                    FOREIGN KEY(postId) REFERENCES posts(id) ON DELETE CASCADE
+                )
+            """.trimIndent())
+            createCurrentReactionIndexes(database)
+        }
+
+        private fun createCurrentReactionIndexes(database: SupportSQLiteDatabase) {
+            database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_reactions_unique ON reactions(postId, userId, type)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_reactions_postId ON reactions(postId)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_reactions_timestamp ON reactions(timestamp)")
+        }
+
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS notifications (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        type TEXT NOT NULL,
+                        message TEXT NOT NULL,
+                        postId TEXT,
+                        authorName TEXT,
+                        timestamp INTEGER NOT NULL,
+                        isRead INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_notifications_timestamp ON notifications(timestamp)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_notifications_isRead ON notifications(isRead)")
+            }
+        }
+
+        private fun getTableColumns(database: SupportSQLiteDatabase, tableName: String): Set<String> {
+            val columns = mutableSetOf<String>()
+            database.query("PRAGMA table_info($tableName)").use { cursor ->
+                val nameIndex = cursor.getColumnIndex("name")
+                while (cursor.moveToNext()) {
+                    columns += cursor.getString(nameIndex)
+                }
+            }
+            return columns
         }
 
         fun getDatabase(context: Context): AppDatabase {
@@ -139,7 +240,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_2_3,
                         MIGRATION_3_4,
                         MIGRATION_4_5,
-                        MIGRATION_5_6
+                        MIGRATION_5_6,
+                        MIGRATION_6_7
                     )
                     .build()
                 INSTANCE = instance

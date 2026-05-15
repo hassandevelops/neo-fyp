@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.neo.data.db.AppDatabase
 import com.neo.data.repository.PostRepository
+import com.neo.security.CryptoManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -19,7 +20,8 @@ import javax.inject.Singleton
 class StorageManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val postRepository: PostRepository,
-    private val database: AppDatabase
+    private val database: AppDatabase,
+    private val cryptoManager: CryptoManager
 ) {
     
     companion object {
@@ -165,10 +167,21 @@ class StorageManager @Inject constructor(
      * Clean up orphaned image files (images not referenced by any post).
      */
     suspend fun cleanupOrphanedImages(): Int = withContext(Dispatchers.IO) {
-        // This would require tracking image references
-        // For now, just log
-        Log.d(TAG, "Orphaned image cleanup not yet implemented")
-        0
+        val imageDir = File(context.filesDir, "images")
+        if (!imageDir.exists()) return@withContext 0
+
+        val referencedHashes = postRepository.getReferencedImageHashes()
+        var deletedCount = 0
+
+        imageDir.listFiles { file -> file.isFile }?.forEach { file ->
+            val imageHash = file.name.removeSuffix(".jpg")
+            if (imageHash !in referencedHashes && file.delete()) {
+                deletedCount++
+                Log.d(TAG, "Deleted orphaned image: ${file.name}")
+            }
+        }
+
+        deletedCount
     }
     
     /**
@@ -190,14 +203,8 @@ class StorageManager @Inject constructor(
         )
     }
     
-    /**
-     * Get device ID from crypto manager.
-     * TODO: Inject CryptoManager instead of hardcoding
-     */
     private fun getDeviceId(): String {
-        // For now, return empty to not exclude any posts
-        // In real implementation, inject CryptoManager
-        return ""
+        return cryptoManager.getDeviceId()
     }
     
     /**

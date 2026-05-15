@@ -37,6 +37,18 @@ Quick build (with Java 17 configured):
 ./gradlew assembleDebug
 ```
 
+## Current Validation
+
+The Android project currently passes:
+```bash
+./gradlew compileDebugKotlin
+./gradlew testDebugUnitTest
+./gradlew assembleDebugAndroidTest
+./gradlew assembleDebug
+```
+
+Physical multi-device BLE mesh testing is still required before final live demonstration.
+
 ## How It Works
 
 1. **Post Creation**: Users create posts that are cryptographically signed with Ed25519

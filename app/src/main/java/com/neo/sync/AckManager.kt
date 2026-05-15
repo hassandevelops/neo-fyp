@@ -74,9 +74,17 @@ class AckManager @Inject constructor(
         )
         
         pendingMessages[messageId] = pending
-        
-        // Start retry job
-        scheduleRetry(pending)
+
+        scope.launch {
+            try {
+                pending.sendFunction(pending.message, pending.peerAddress)
+                scheduleRetry(pending)
+            } catch (e: Exception) {
+                pendingMessages.remove(messageId)
+                pending.onFailure?.invoke("Initial send failed: ${e.message}")
+                Log.e(TAG, "Failed to send message $messageId", e)
+            }
+        }
         
         Log.d(TAG, "Tracking message $messageId for ACK")
     }

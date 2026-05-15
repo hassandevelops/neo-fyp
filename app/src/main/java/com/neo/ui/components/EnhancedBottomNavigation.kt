@@ -31,12 +31,7 @@ fun EnhancedBottomNavigation(
     onFabClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "fab_glow")
-    val fabGlow by infiniteTransition.animateFloat(
-        initialValue = 0.4f, targetValue = 0.85f,
-        animationSpec = infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "fab_glow"
-    )
+    val fabGlow = 0.6f
 
     Surface(
         modifier = modifier.fillMaxWidth(),

@@ -48,7 +48,7 @@ org.gradle.java.home=/usr/lib/jvm/java-17-openjdk
 Once Java 17 is configured:
 
 ```bash
-cd /home/hassan/Desktop/neo
+cd /home/hassan/Projects/neo-fyp
 ./gradlew assembleDebug
 ```
 
@@ -66,7 +66,7 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 ## Opening in Android Studio
 
 1. Open Android Studio
-2. File → Open → Select `/home/hassan/Desktop/neo`
+2. File → Open → Select `/home/hassan/Projects/neo-fyp`
 3. Android Studio will sync Gradle automatically
 4. Make sure Android Studio is using Java 17:
    - File → Settings → Build, Execution, Deployment → Build Tools → Gradle
@@ -88,4 +88,13 @@ sdk.dir=/home/hassan/Android/Sdk
 
 ## Current Build Status
 
-The project is complete and ready to build once Java 17 is configured. All 27 Kotlin source files compile successfully with the correct Java version.
+Verified locally with Java 17:
+
+```bash
+./gradlew compileDebugKotlin
+./gradlew testDebugUnitTest
+./gradlew assembleDebugAndroidTest
+./gradlew assembleDebug
+```
+
+All four commands pass. Physical multi-device BLE mesh testing still needs to be run on Android devices before final demonstration.

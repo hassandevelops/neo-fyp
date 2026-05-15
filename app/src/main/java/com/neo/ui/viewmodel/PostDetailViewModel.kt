@@ -3,19 +3,31 @@ package com.neo.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.neo.data.model.Notification
 import com.neo.data.model.ReactionType
 import com.neo.data.repository.CommentRepository
+import com.neo.data.repository.NotificationRepository
 import com.neo.data.repository.ReactionRepository
 import com.neo.domain.usecase.CreateCommentUseCase
 import com.neo.domain.usecase.CreateReactionUseCase
 import com.neo.domain.usecase.DeleteReactionUseCase
 import com.neo.security.CryptoManager
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.util.UUID
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+data class PostStats(
+    val commentCount: Int = 0,
+    val likeCount: Int = 0,
+    val hasLiked: Boolean = false
+)
 
 @HiltViewModel
 class PostDetailViewModel @Inject constructor(
@@ -25,7 +37,8 @@ class PostDetailViewModel @Inject constructor(
     private val reactionRepository: ReactionRepository,
     private val createReactionUseCase: CreateReactionUseCase,
     private val deleteReactionUseCase: DeleteReactionUseCase,
-    private val cryptoManager: CryptoManager
+    private val cryptoManager: CryptoManager,
+    private val notificationRepository: NotificationRepository
 ) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow<UiState>(UiState.Idle)
@@ -36,6 +49,20 @@ class PostDetailViewModel @Inject constructor(
         object Loading : UiState()
         data class Error(val message: String) : UiState()
         data class Success(val message: String) : UiState()
+    }
+
+    fun getPostStatsMapFlow(postIds: List<String>): Flow<Map<String, PostStats>> {
+        if (postIds.isEmpty()) return kotlinx.coroutines.flow.flowOf(emptyMap())
+        val flows = postIds.map { postId ->
+            combine(
+                getCommentCountForPost(postId),
+                getLikeCountForPost(postId),
+                hasUserLikedPostFlow(postId)
+            ) { commentCount, likeCount, hasLiked ->
+                postId to PostStats(commentCount, likeCount, hasLiked)
+            }
+        }
+        return combine(flows) { pairs -> pairs.toMap() }
     }
 
     fun getTopLevelCommentsForPost(postId: String) =
@@ -79,6 +106,16 @@ class PostDetailViewModel @Inject constructor(
                 onSuccess = {
                     _uiState.value = UiState.Success("Comment created")
                     onSuccess()
+                    notificationRepository.insert(
+                        Notification(
+                            id = UUID.randomUUID().toString(),
+                            type = "comment",
+                            message = "You commented on a post",
+                            postId = postId,
+                            authorName = authorName,
+                            timestamp = System.currentTimeMillis()
+                        )
+                    )
                 },
                 onFailure = { error ->
                     _uiState.value = UiState.Error(error.message ?: "Failed to create comment")
@@ -104,7 +141,20 @@ class PostDetailViewModel @Inject constructor(
             }
 
             result.fold(
-                onSuccess = {},
+                onSuccess = {
+                    if (!hasLiked) {
+                        notificationRepository.insert(
+                            Notification(
+                                id = UUID.randomUUID().toString(),
+                                type = "like",
+                                message = "$userName liked a post",
+                                postId = postId,
+                                authorName = userName,
+                                timestamp = System.currentTimeMillis()
+                            )
+                        )
+                    }
+                },
                 onFailure = { error ->
                     onError(error.message ?: "Failed to update like")
                 }

@@ -1,6 +1,7 @@
 package com.neo.sync
 
 import android.util.Log
+import android.util.Base64
 import com.neo.bluetooth.BluetoothService
 import com.neo.bluetooth.Message
 import com.neo.data.model.Device
@@ -87,7 +88,11 @@ class GossipProtocol @Inject constructor(
             timestamp = post.timestamp,
             signature = post.signature,
             publicKey = post.publicKey,
-            ttl = post.ttl
+            ttl = post.ttl,
+            imageHash = post.imageHash,
+            imageSize = post.imageSize,
+            imageWidth = post.imageWidth,
+            imageHeight = post.imageHeight
         )
 
         val peerAddresses = service.getConnectedPeerAddresses()
@@ -169,7 +174,8 @@ class GossipProtocol @Inject constructor(
 
         // Chunk and send image data
         val chunker = ImageChunker()
-        val chunks = chunker.chunkImage(imageData.decodeToString(), post.id)
+        val encodedImageData = Base64.encodeToString(imageData, Base64.NO_WRAP)
+        val chunks = chunker.chunkImage(encodedImageData, post.id)
 
         for (chunk in chunks) {
             val chunkMessage = Message.ImageChunk(
@@ -222,6 +228,10 @@ class GossipProtocol @Inject constructor(
                 authorId = postBroadcast.authorId,
                 authorName = postBroadcast.authorName,
                 content = postBroadcast.content,
+                imageHash = postBroadcast.imageHash,
+                imageSize = postBroadcast.imageSize,
+                imageWidth = postBroadcast.imageWidth,
+                imageHeight = postBroadcast.imageHeight,
                 timestamp = postBroadcast.timestamp,
                 signature = postBroadcast.signature,
                 publicKey = postBroadcast.publicKey,
@@ -275,6 +285,10 @@ class GossipProtocol @Inject constructor(
             authorId = postBroadcast.authorId,
             authorName = postBroadcast.authorName,
             content = postBroadcast.content,
+            imageHash = postBroadcast.imageHash,
+            imageSize = postBroadcast.imageSize,
+            imageWidth = postBroadcast.imageWidth,
+            imageHeight = postBroadcast.imageHeight,
             timestamp = postBroadcast.timestamp,
             signature = postBroadcast.signature,
             publicKey = postBroadcast.publicKey,
@@ -320,7 +334,11 @@ class GossipProtocol @Inject constructor(
             timestamp = post.timestamp,
             signature = post.signature,
             publicKey = post.publicKey,
-            ttl = newTtl
+            ttl = newTtl,
+            imageHash = post.imageHash,
+            imageSize = post.imageSize,
+            imageWidth = post.imageWidth,
+            imageHeight = post.imageHeight
         )
 
         val peerAddresses = service.getConnectedPeerAddresses().filter { it != excludePeerAddress }
@@ -399,7 +417,7 @@ class GossipProtocol @Inject constructor(
             val existingPost = postRepository.getPostById(chunk.postId)
             if (existingPost != null && existingPost.imageHash != null) {
                 // Save image to file store
-                val imageBytes = completeImageData.toByteArray()
+                val imageBytes = Base64.decode(completeImageData, Base64.NO_WRAP)
                 val savedPath = imageFileStore.save(existingPost.imageHash, imageBytes)
                 if (savedPath != null) {
                     Log.d(TAG, "Saved image to file store: ${existingPost.imageHash}")

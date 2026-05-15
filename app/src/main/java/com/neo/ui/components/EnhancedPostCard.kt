@@ -41,21 +41,21 @@ fun EnhancedPostCard(
     onPostClick: () -> Unit,
     onLikeClick: () -> Unit,
     onCommentClick: () -> Unit,
+    isLiked: Boolean = false,
+    likeCount: Int = 0,
     commentCount: Int = 0,
     isLive: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var liked by remember { mutableStateOf(false) }
     var saved by remember { mutableStateOf(false) }
-    var likes by remember { mutableIntStateOf(0) }
 
     val likeColor by animateColorAsState(
-        targetValue = if (liked) NeoLime else TextWhite60,
+        targetValue = if (isLiked) NeoLime else TextWhite60,
         label = "like_color"
     )
     val likeScale by animateFloatAsState(
-        targetValue = if (liked) 1.3f else 1f,
+        targetValue = if (isLiked) 1.3f else 1f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
         label = "like_scale"
     )
@@ -64,16 +64,20 @@ fun EnhancedPostCard(
         label = "bookmark_color"
     )
 
-    val infiniteTransition = rememberInfiniteTransition(label = "live_pulse")
-    val livePulse by infiniteTransition.animateFloat(
-        initialValue = 0.6f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(700),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "live_pulse"
-    )
+    val livePulse by if (isLive) {
+        val t = rememberInfiniteTransition(label = "live_pulse")
+        t.animateFloat(
+            initialValue = 0.6f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(700),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "live_pulse"
+        )
+    } else {
+        remember { mutableFloatStateOf(0.8f) }
+    }
 
     Card(
         modifier = modifier
@@ -83,98 +87,81 @@ fun EnhancedPostCard(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = NeoGray900)
     ) {
-        Box {
-            // ── Image / content area ──────────────────────────────────────
+        Column {
             val imagePath = remember(post.imageHash) {
                 post.imageHash?.let {
                     java.io.File(context.filesDir, "images/$it.jpg").takeIf { f -> f.exists() }
                 }
             }
 
-            if (imagePath != null) {
-                Image(
-                    painter = rememberAsyncImagePainter(model = imagePath),
-                    contentDescription = "Post image",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 220.dp, max = 380.dp),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                // Text-only card body
-                Text(
-                    text = post.content,
-                    color = TextWhite,
-                    fontSize = 15.sp,
-                    lineHeight = 22.sp,
-                    modifier = Modifier.padding(16.dp)
-                )
-            }
-
-            // ── Dark scrim over the bottom of the image ───────────────────
-            if (imagePath != null) {
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(
-                            Brush.verticalGradient(
-                                0.0f to Color.Transparent,
-                                0.35f to Color.Transparent,
-                                1.0f to Color.Black.copy(alpha = 0.75f)
-                            )
-                        )
-                )
-            }
-
-            // ── LIVE badge — top-left ─────────────────────────────────────
-            if (isLive) {
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(12.dp)
-                        .background(NeoBlack.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    Box(
+            Box {
+                if (imagePath != null) {
+                    Image(
+                        painter = rememberAsyncImagePainter(model = imagePath),
+                        contentDescription = "Post image",
                         modifier = Modifier
-                            .size(7.dp)
-                            .scale(livePulse)
-                            .background(NeoGreen, CircleShape)
+                            .fillMaxWidth()
+                            .heightIn(min = 220.dp, max = 380.dp),
+                        contentScale = ContentScale.Crop
                     )
-                    Text("LIVE", color = TextWhite, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-
-            // ── View count — top-right ─────────────────────────────────────
-            if (imagePath != null && commentCount > 0) {
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(12.dp)
-                        .background(NeoBlack.copy(alpha = 0.5f), RoundedCornerShape(20.dp))
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Icon(Icons.Default.People, null, tint = TextWhite60, modifier = Modifier.size(13.dp))
+                } else {
                     Text(
-                        text = if (commentCount > 999) "${commentCount / 1000}K" else commentCount.toString(),
+                        text = post.content,
                         color = TextWhite,
-                        fontSize = 11.sp
+                        fontSize = 15.sp,
+                        lineHeight = 22.sp,
+                        modifier = Modifier.padding(16.dp)
                     )
+                }
+
+                // LIVE badge — top-left
+                if (isLive) {
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(12.dp)
+                            .background(NeoBlack.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .scale(livePulse)
+                                .background(NeoGreen, CircleShape)
+                        )
+                        Text("LIVE", color = TextWhite, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                // View count — top-right
+                if (imagePath != null && commentCount > 0) {
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(12.dp)
+                            .background(NeoBlack.copy(alpha = 0.5f), RoundedCornerShape(20.dp))
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(Icons.Default.People, null, tint = TextWhite60, modifier = Modifier.size(13.dp))
+                        Text(
+                            text = if (commentCount > 999) "${commentCount / 1000}K" else commentCount.toString(),
+                            color = TextWhite,
+                            fontSize = 11.sp
+                        )
+                    }
                 }
             }
 
-            // ── Bottom: author + stats row ─────────────────────────────────
+            // Author + action section
             Column(
                 modifier = Modifier
-                    .align(Alignment.BottomStart)
                     .fillMaxWidth()
                     .padding(horizontal = 14.dp, vertical = 12.dp)
             ) {
-                // Author row
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -214,7 +201,6 @@ fun EnhancedPostCard(
 
                 Spacer(Modifier.height(10.dp))
 
-                // Action row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -224,7 +210,6 @@ fun EnhancedPostCard(
                         horizontalArrangement = Arrangement.spacedBy(20.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Like
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -232,23 +217,20 @@ fun EnhancedPostCard(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null
                             ) {
-                                liked = !liked
-                                likes = if (liked) likes + 1 else (likes - 1).coerceAtLeast(0)
                                 onLikeClick()
                             }
                         ) {
                             Box(modifier = Modifier.scale(likeScale)) {
                                 Icon(
-                                    imageVector = if (liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                                    imageVector = if (isLiked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
                                     contentDescription = "Like",
                                     tint = likeColor,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
-                            Text(likes.toString(), color = TextWhite80, fontSize = 13.sp)
+                            Text(likeCount.toString(), color = TextWhite80, fontSize = 13.sp)
                         }
 
-                        // Comment
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -258,7 +240,6 @@ fun EnhancedPostCard(
                             Text(commentCount.toString(), color = TextWhite80, fontSize = 13.sp)
                         }
 
-                        // Share
                         Icon(
                             Icons.Outlined.Share,
                             "Share",
@@ -269,7 +250,6 @@ fun EnhancedPostCard(
                         )
                     }
 
-                    // Bookmark
                     Icon(
                         imageVector = if (saved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
                         contentDescription = "Save",
