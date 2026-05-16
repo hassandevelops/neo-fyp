@@ -287,9 +287,9 @@ fun BLEMeshStatusScreen(
                     StatCard(
                         backgroundColor = NeoGray900,
                         icon = Icons.Default.BarChart,
-                        title = "",
-                        mainValue = "1.2",
-                        subValue = " MB/s",
+                        title = "Throughput",
+                        mainValue = "--",
+                        subValue = "",
                         badgeText = null,
                         showProgressBar = true,
                         modifier = Modifier.weight(1f)
@@ -305,7 +305,7 @@ fun BLEMeshStatusScreen(
                         backgroundColor = NeoGray900,
                         icon = Icons.Default.GraphicEq,
                         title = "Avg Latency",
-                        mainValue = "1",
+                        mainValue = "--",
                         subValue = "",
                         badgeText = null,
                         showProgressBar = false,
@@ -314,12 +314,10 @@ fun BLEMeshStatusScreen(
                     StatCard(
                         backgroundColor = NeoGray900,
                         icon = Icons.Default.Sensors,
-                        title = "",
-                        mainValue = "34",
-                        subValue = " MB/s",
-                        badgeText = "Optimal",
-                        badgeBackgroundColor = Color(0xFF3D2E1A),
-                        badgeTextColor = NeoOrange,
+                        title = "Transfer Rate",
+                        mainValue = "--",
+                        subValue = "",
+                        badgeText = null,
                         showProgressBar = false,
                         modifier = Modifier.weight(1f)
                     )

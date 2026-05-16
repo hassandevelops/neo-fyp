@@ -6,7 +6,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.ExperimentalMaterialApi
@@ -20,15 +19,11 @@ import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -40,6 +35,9 @@ import androidx.compose.material3.MaterialTheme
 import com.neo.ui.viewmodel.FeedViewModel
 import com.neo.ui.viewmodel.PostDetailViewModel
 import com.neo.ui.viewmodel.PostStats
+import androidx.paging.LoadState
+import androidx.paging.compose.collectAsLazyPagingItems
+import androidx.paging.compose.itemKey
 
 @OptIn(ExperimentalMaterialApi::class)
 @Composable
@@ -55,18 +53,24 @@ fun EnhancedFeedScreen(
     onNavigateToPostDetail: (Post) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val posts by viewModel.posts.collectAsState()
+    val pagedPosts = viewModel.pagedPosts.collectAsLazyPagingItems()
     val connectedPeersCount by viewModel.connectedPeersCount.collectAsState()
     val notificationCount by viewModel.notificationCount.collectAsState()
-    val uiState by viewModel.uiState.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
-    val postStatsMap by postDetailViewModel.getPostStatsMapFlow(posts.map { it.id })
+    val visiblePosts = pagedPosts.itemSnapshotList.items
+    val postStatsMap by postDetailViewModel.getPostStatsMapFlow(visiblePosts.map { it.id })
         .collectAsState(initial = emptyMap())
     var selectedPostForComments by remember { mutableStateOf<Post?>(null) }
+    val refreshLoadState = pagedPosts.loadState.refresh
+    val appendLoadState = pagedPosts.loadState.append
+    val isFeedRefreshing = isRefreshing || refreshLoadState is LoadState.Loading
 
     val pullRefreshState = rememberPullRefreshState(
-        refreshing = isRefreshing,
-        onRefresh = { viewModel.refresh() }
+        refreshing = isFeedRefreshing,
+        onRefresh = {
+            viewModel.refresh()
+            pagedPosts.refresh()
+        }
     )
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -80,76 +84,118 @@ fun EnhancedFeedScreen(
                     notificationCount = notificationCount
                 )
 
-                when (val state = uiState) {
-                    is FeedViewModel.UiState.Loading -> {
-                        LoadingShimmer()
-                    }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pullRefresh(pullRefreshState)
+                ) {
+                    when {
+                        refreshLoadState is LoadState.Loading && pagedPosts.itemCount == 0 -> {
+                            LoadingShimmer()
+                        }
 
-                    is FeedViewModel.UiState.Error -> {
-                        ErrorState(
-                            message = state.message,
-                            onRetry = { viewModel.refresh() }
-                        )
-                    }
-
-                    is FeedViewModel.UiState.Success -> {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .pullRefresh(pullRefreshState)
-                        ) {
-                            if (state.isEmpty && posts.isEmpty()) {
-                                EmptyState(onRefresh = { viewModel.refresh() })
-                            } else {
-                                LazyColumn(
-                                    modifier = Modifier.fillMaxSize(),
-                                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                                ) {
-                                    // BLE Mesh Status Card
-                                    item {
-                                        BLEMeshCard(
-                                            connectedPeers = connectedPeersCount,
-                                            onClick = onNavigateToBLEStatus
-                                        )
-                                    }
-
-                                    // Posts
-                                    items(posts, key = { it.id }) { post ->
-                                        val stats = postStatsMap[post.id] ?: PostStats()
-
-                                        EnhancedPostCard(
-                                            modifier = Modifier.padding(horizontal = 16.dp),
-                                            post = post,
-                                            onPostClick = { onNavigateToPostDetail(post) },
-                                            onLikeClick = {
-                                                postDetailViewModel.toggleLike(
-                                                    postId = post.id,
-                                                    userName = currentUserName
-                                                )
-                                            },
-                                            onCommentClick = { selectedPostForComments = post },
-                                            isLiked = stats.hasLiked,
-                                            likeCount = stats.likeCount,
-                                            commentCount = stats.commentCount
-                                        )
-                                    }
-
-                                    // Bottom padding for nav bar
-                                    item {
-                                        Spacer(modifier = Modifier.height(90.dp))
-                                    }
+                        refreshLoadState is LoadState.Error && pagedPosts.itemCount == 0 -> {
+                            ErrorState(
+                                message = refreshLoadState.error.message ?: "Unable to load feed",
+                                onRetry = {
+                                    viewModel.refresh()
+                                    pagedPosts.retry()
                                 }
-                            }
-
-                            PullRefreshIndicator(
-                                refreshing = isRefreshing,
-                                state = pullRefreshState,
-                                modifier = Modifier.align(Alignment.TopCenter),
-                                backgroundColor = NeoGray900,
-                                contentColor = NeoLime
                             )
                         }
+
+                        pagedPosts.itemCount == 0 -> {
+                            EmptyState(
+                                onRefresh = {
+                                    viewModel.refresh()
+                                    pagedPosts.refresh()
+                                }
+                            )
+                        }
+
+                        else -> {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                // BLE Mesh Status Card
+                                item {
+                                    BLEMeshCard(
+                                        connectedPeers = connectedPeersCount,
+                                        onClick = onNavigateToBLEStatus
+                                    )
+                                }
+
+                                // Posts
+                                items(
+                                    count = pagedPosts.itemCount,
+                                    key = pagedPosts.itemKey { it.id }
+                                ) { index ->
+                                    val post = pagedPosts[index]
+                                    if (post == null) {
+                                        ShimmerCard(
+                                            brush = Brush.linearGradient(
+                                                colors = listOf(NeoGray800, NeoGray700, NeoGray800)
+                                            ),
+                                            modifier = Modifier.padding(horizontal = 16.dp)
+                                        )
+                                        return@items
+                                    }
+                                    val stats = postStatsMap[post.id] ?: PostStats()
+
+                                    EnhancedPostCard(
+                                        modifier = Modifier.padding(horizontal = 16.dp),
+                                        post = post,
+                                        onPostClick = { onNavigateToPostDetail(post) },
+                                        onLikeClick = {
+                                            postDetailViewModel.toggleLike(
+                                                postId = post.id,
+                                                userName = currentUserName
+                                            )
+                                        },
+                                        onCommentClick = { selectedPostForComments = post },
+                                        isLiked = stats.hasLiked,
+                                        likeCount = stats.likeCount,
+                                        commentCount = stats.commentCount
+                                    )
+                                }
+
+                                if (appendLoadState is LoadState.Loading) {
+                                    item {
+                                        CircularProgressIndicator(
+                                            color = NeoLime,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(16.dp)
+                                                .wrapContentWidth(Alignment.CenterHorizontally)
+                                        )
+                                    }
+                                }
+
+                                if (appendLoadState is LoadState.Error) {
+                                    item {
+                                        AppendErrorState(
+                                            message = appendLoadState.error.message ?: "Unable to load more posts",
+                                            onRetry = { pagedPosts.retry() }
+                                        )
+                                    }
+                                }
+
+                                // Bottom padding for nav bar
+                                item {
+                                    Spacer(modifier = Modifier.height(90.dp))
+                                }
+                            }
+                        }
                     }
+
+                    PullRefreshIndicator(
+                        refreshing = isFeedRefreshing,
+                        state = pullRefreshState,
+                        modifier = Modifier.align(Alignment.TopCenter),
+                        backgroundColor = NeoGray900,
+                        contentColor = NeoLime
+                    )
                 }
             }
         }
@@ -219,9 +265,12 @@ private fun LoadingShimmer() {
 }
 
 @Composable
-private fun ShimmerCard(brush: Brush) {
+private fun ShimmerCard(
+    brush: Brush,
+    modifier: Modifier = Modifier
+) {
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(320.dp),
         shape = RoundedCornerShape(20.dp),
@@ -232,6 +281,30 @@ private fun ShimmerCard(brush: Brush) {
                 .fillMaxSize()
                 .background(brush)
         )
+    }
+}
+
+@Composable
+private fun AppendErrorState(
+    message: String,
+    onRetry: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = message,
+            color = TextWhite60,
+            fontSize = 13.sp,
+            modifier = Modifier.weight(1f)
+        )
+        TextButton(onClick = onRetry) {
+            Text("Retry", color = NeoLime)
+        }
     }
 }
 

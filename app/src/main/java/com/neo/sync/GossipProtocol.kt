@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -418,6 +419,14 @@ class GossipProtocol @Inject constructor(
             if (existingPost != null && existingPost.imageHash != null) {
                 // Save image to file store
                 val imageBytes = Base64.decode(completeImageData, Base64.NO_WRAP)
+                val actualHash = calculateImageHash(imageBytes)
+                if (actualHash != existingPost.imageHash) {
+                    Log.w(
+                        TAG,
+                        "Discarding image for post ${chunk.postId}: hash mismatch expected=${existingPost.imageHash}, actual=$actualHash"
+                    )
+                    return
+                }
                 val savedPath = imageFileStore.save(existingPost.imageHash, imageBytes)
                 if (savedPath != null) {
                     Log.d(TAG, "Saved image to file store: ${existingPost.imageHash}")
@@ -430,6 +439,11 @@ class GossipProtocol @Inject constructor(
         }
 
         Log.d(TAG, "Image chunk ${chunk.chunkIndex + 1}/${chunk.totalChunks} received for post ${chunk.postId}")
+    }
+
+    private fun calculateImageHash(data: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        return digest.digest(data).joinToString("") { "%02x".format(it) }
     }
     
     /**

@@ -1,112 +1,98 @@
 package com.neo.security
 
-import io.mockk.every
-import io.mockk.mockk
-import io.mockk.verify
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 import java.util.Base64
 
-/**
- * Unit tests for CryptoManager.
- * Tests key generation, signing, and verification.
- */
+@RunWith(RobolectricTestRunner::class)
 class CryptoManagerTest {
 
     private lateinit var cryptoManager: CryptoManager
+    private val message = "test message to sign"
 
     @Before
     fun setup() {
-        // Note: This test requires Android context for EncryptedSharedPreferences
-        // In a real scenario, you'd use Robolectric or mock the dependencies
-        // For now, this is a template showing the test structure
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        cryptoManager = CryptoManager(context)
     }
 
     @Test
-    fun `test signature verification with valid signature`() {
-        // This test would require actual CryptoManager instance
-        // Template for structure:
+    fun `sign and verify with valid signature returns true`() {
+        val signature = cryptoManager.sign(message)
+        val publicKey = cryptoManager.getPublicKey()
 
-        // Arrange
-        // val cryptoManager = CryptoManager(context)
-        // val message = "test message"
+        val isValid = cryptoManager.verify(message, signature, publicKey)
 
-        // Act
-        // val signature = cryptoManager.sign(message)
-        // val publicKey = cryptoManager.getPublicKey()
-        // val isValid = cryptoManager.verify(message, signature, publicKey)
-
-        // Assert
-        // assertTrue(isValid)
+        assertTrue(isValid)
     }
 
     @Test
-    fun `test signature verification with invalid signature`() {
-        // Template for invalid signature test
+    fun `verify with invalid signature returns false`() {
+        val publicKey = cryptoManager.getPublicKey()
 
-        // Arrange
-        // val cryptoManager = CryptoManager(context)
-        // val message = "test message"
-        // val fakeSignature = "invalid-signature"
-        // val publicKey = cryptoManager.getPublicKey()
+        val isValid = cryptoManager.verify(message, "invalid-signature", publicKey)
 
-        // Act
-        // val isValid = cryptoManager.verify(message, fakeSignature, publicKey)
-
-        // Assert
-        // assertFalse(isValid)
+        assertFalse(isValid)
     }
 
     @Test
-    fun `test signature verification with tampered message`() {
-        // Template for tampered message test
+    fun `verify with tampered message returns false`() {
+        val originalMessage = "original message"
+        val signature = cryptoManager.sign(originalMessage)
+        val publicKey = cryptoManager.getPublicKey()
+        val tamperedMessage = "tampered message"
 
-        // Arrange
-        // val cryptoManager = CryptoManager(context)
-        // val originalMessage = "original message"
-        // val signature = cryptoManager.sign(originalMessage)
-        // val publicKey = cryptoManager.getPublicKey()
-        // val tamperedMessage = "tampered message"
+        val isValid = cryptoManager.verify(tamperedMessage, signature, publicKey)
 
-        // Act
-        // val isValid = cryptoManager.verify(tamperedMessage, signature, publicKey)
-
-        // Assert
-        // assertFalse(isValid)
+        assertFalse(isValid)
     }
 
     @Test
-    fun `test different messages produce different signatures`() {
-        // Template for signature uniqueness test
+    fun `different messages produce different signatures`() {
+        val signature1 = cryptoManager.sign("message 1")
+        val signature2 = cryptoManager.sign("message 2")
 
-        // Arrange
-        // val cryptoManager = CryptoManager(context)
-        // val message1 = "message 1"
-        // val message2 = "message 2"
-
-        // Act
-        // val signature1 = cryptoManager.sign(message1)
-        // val signature2 = cryptoManager.sign(message2)
-
-        // Assert
-        // assertNotEquals(signature1, signature2)
+        assertNotEquals(signature1, signature2)
     }
 
     @Test
-    fun `test public key is Base64 encoded`() {
-        // Template for public key format test
+    fun `getDeviceId returns non-empty string`() {
+        val deviceId = cryptoManager.getDeviceId()
 
-        // Arrange
-        // val cryptoManager = CryptoManager(context)
+        assertNotNull(deviceId)
+        assertTrue(deviceId.isNotEmpty())
+    }
 
-        // Act
-        // val publicKey = cryptoManager.getPublicKey()
+    @Test
+    fun `getDeviceId is stable across calls`() {
+        val deviceId1 = cryptoManager.getDeviceId()
+        val deviceId2 = cryptoManager.getDeviceId()
 
-        // Assert
-        // assertNotNull(publicKey)
-        // assertTrue(publicKey.isNotEmpty())
-        // // Should be able to decode as Base64
-        // assertDoesNotThrow { Base64.getDecoder().decode(publicKey) }
+        assertEquals(deviceId1, deviceId2)
+    }
+
+    @Test
+    fun `public key is Base64 encoded`() {
+        val publicKey = cryptoManager.getPublicKey()
+
+        assertNotNull(publicKey)
+        assertTrue(publicKey.isNotEmpty())
+        val decoded = Base64.getDecoder().decode(publicKey)
+        assertTrue(decoded.isNotEmpty())
+    }
+
+    @Test
+    fun `verify with wrong public key returns false`() {
+        val signature = cryptoManager.sign(message)
+        val wrongKey = Base64.getEncoder().encodeToString("wrong-key".toByteArray())
+
+        val isValid = cryptoManager.verify(message, signature, wrongKey)
+
+        assertFalse(isValid)
     }
 }

@@ -2,6 +2,7 @@ package com.neo.ui.viewmodel
 
 import com.neo.data.model.ReactionType
 import com.neo.data.repository.CommentRepository
+import com.neo.data.repository.NotificationRepository
 import com.neo.data.repository.ReactionRepository
 import com.neo.domain.usecase.CreateCommentUseCase
 import com.neo.domain.usecase.CreateReactionUseCase
@@ -26,6 +27,7 @@ class PostDetailViewModelTest {
     private lateinit var createReactionUseCase: CreateReactionUseCase
     private lateinit var deleteReactionUseCase: DeleteReactionUseCase
     private lateinit var cryptoManager: CryptoManager
+    private lateinit var notificationRepository: NotificationRepository
     private val testDispatcher = UnconfinedTestDispatcher()
 
     @Before
@@ -37,6 +39,7 @@ class PostDetailViewModelTest {
         createReactionUseCase = mockk()
         deleteReactionUseCase = mockk()
         cryptoManager = mockk(relaxed = true)
+        notificationRepository = mockk(relaxed = true)
     }
 
     @After
@@ -52,7 +55,8 @@ class PostDetailViewModelTest {
             reactionRepository = reactionRepository,
             createReactionUseCase = createReactionUseCase,
             deleteReactionUseCase = deleteReactionUseCase,
-            cryptoManager = cryptoManager
+            cryptoManager = cryptoManager,
+            notificationRepository = notificationRepository
         )
     }
 
@@ -153,5 +157,41 @@ class PostDetailViewModelTest {
         val result = vm.hasUserLikedPostFlow("post-1")
 
         assertSame(flow, result)
+    }
+
+    @Test
+    fun `create comment inserts notification on success`() = runTest {
+        coEvery { createCommentUseCase(any(), any(), any(), any()) } returns Result.success(mockk(relaxed = true))
+        coEvery { notificationRepository.insert(any()) } just Runs
+        val vm = createViewModel()
+
+        vm.createComment(postId = "post-1", content = "Nice!", authorName = "Alice")
+
+        coVerify { notificationRepository.insert(match { it.type == "comment" }) }
+    }
+
+    @Test
+    fun `toggle like inserts notification for new like`() = runTest {
+        every { cryptoManager.getDeviceId() } returns "device-1"
+        coEvery { reactionRepository.hasUserReacted("post-1", "device-1", ReactionType.LIKE) } returns false
+        coEvery { createReactionUseCase("post-1", "Alice", ReactionType.LIKE) } returns Result.success(mockk(relaxed = true))
+        coEvery { notificationRepository.insert(any()) } just Runs
+        val vm = createViewModel()
+
+        vm.toggleLike(postId = "post-1", userName = "Alice")
+
+        coVerify { notificationRepository.insert(match { it.type == "like" }) }
+    }
+
+    @Test
+    fun `toggle like does not insert notification for unlike`() = runTest {
+        every { cryptoManager.getDeviceId() } returns "device-1"
+        coEvery { reactionRepository.hasUserReacted("post-1", "device-1", ReactionType.LIKE) } returns true
+        coEvery { deleteReactionUseCase("post-1", ReactionType.LIKE) } returns Result.success(Unit)
+        val vm = createViewModel()
+
+        vm.toggleLike(postId = "post-1", userName = "Alice")
+
+        coVerify(exactly = 0) { notificationRepository.insert(any()) }
     }
 }

@@ -7,6 +7,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.neo.data.dao.PostDao
 import com.neo.data.db.AppDatabase
 import com.neo.data.model.Post
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.*
@@ -74,25 +75,19 @@ class PostDaoTest {
     
     @Test
     fun getAllPosts_returnsOrderedByTimestamp() = runBlocking {
-        // Arrange
         val post1 = createTestPost("post-1", timestamp = 1000L)
         val post2 = createTestPost("post-2", timestamp = 3000L)
         val post3 = createTestPost("post-3", timestamp = 2000L)
-        
-        // Act
+
         postDao.insert(post1)
         postDao.insert(post2)
         postDao.insert(post3)
-        
-        // Note: getAllPosts() returns Flow, would need to collect in real test
-        // This is a template showing the test structure
-        
-        // Assert
-        // val posts = postDao.getAllPosts().first()
-        // assertEquals(3, posts.size)
-        // assertEquals("post-2", posts[0].id) // Newest first
-        // assertEquals("post-3", posts[1].id)
-        // assertEquals("post-1", posts[2].id)
+
+        val posts = postDao.getAllPosts().first()
+        assertEquals(3, posts.size)
+        assertEquals("post-2", posts[0].id)
+        assertEquals("post-3", posts[1].id)
+        assertEquals("post-1", posts[2].id)
     }
     
     @Test

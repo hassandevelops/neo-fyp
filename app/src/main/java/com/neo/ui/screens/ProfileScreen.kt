@@ -318,28 +318,6 @@ private fun PostGridItem(
                 }
             }
 
-            // Like count overlay
-            Row(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(8.dp)
-                    .background(NeoBlack.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(3.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.FavoriteBorder,
-                    contentDescription = null,
-                    tint = TextWhite80,
-                    modifier = Modifier.size(11.dp)
-                )
-                Text(
-                    text = "0",
-                    color = TextWhite80,
-                    fontSize = 10.sp
-                )
-            }
         }
     }
 }

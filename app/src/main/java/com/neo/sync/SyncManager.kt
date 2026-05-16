@@ -55,12 +55,15 @@ class SyncManager @Inject constructor(
                     }
                     is Message.PostBroadcast -> {
                         gossipProtocol.handleReceivedPost(message, peerAddress)
+                        sendAck(service, peerAddress, message.id, "PostBroadcast")
                     }
                     is Message.CommentBroadcast -> {
                         gossipProtocol.handleReceivedComment(message, peerAddress)
+                        sendAck(service, peerAddress, message.id, "CommentBroadcast")
                     }
                     is Message.ReactionBroadcast -> {
                         gossipProtocol.handleReceivedReaction(message, peerAddress)
+                        sendAck(service, peerAddress, message.id, "ReactionBroadcast")
                     }
                     is Message.ImageMetadata -> {
                         gossipProtocol.handleImageMetadata(message, peerAddress)
@@ -81,6 +84,22 @@ class SyncManager @Inject constructor(
                 }
             }
         }
+    }
+
+    private suspend fun sendAck(
+        service: BluetoothService,
+        peerAddress: String,
+        messageId: String,
+        messageType: String
+    ) {
+        service.sendMessage(
+            peerAddress,
+            Message.Ack(
+                messageId = messageId,
+                messageType = messageType,
+                success = true
+            )
+        )
     }
 
     /**

@@ -1,10 +1,15 @@
 package com.neo.ui.viewmodel
 
 import com.neo.data.preferences.UserPreferences
+import com.neo.data.repository.PostRepository
+import com.neo.domain.port.ISyncPort
 import com.neo.security.CryptoManager
 import io.mockk.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.*
 import org.junit.After
 import org.junit.Assert.*
@@ -20,6 +25,8 @@ class ProfileViewModelTest {
 
     private val userPreferences = UserPreferences(RuntimeEnvironment.getApplication())
     private val cryptoManager: CryptoManager = mockk(relaxed = true)
+    private val postRepository: PostRepository = mockk()
+    private val syncPort: ISyncPort = mockk()
     private val testDispatcher = StandardTestDispatcher()
 
     private lateinit var viewModel: ProfileViewModel
@@ -28,9 +35,13 @@ class ProfileViewModelTest {
     fun setup() {
         Dispatchers.setMain(testDispatcher)
         MockKAnnotations.init(this)
+        userPreferences.resetToDefaults()
         every { cryptoManager.getDeviceId() } returns "device-123"
+        every { postRepository.getPostCountForAuthor("device-123") } returns flowOf(0)
+        every { postRepository.getPostsByAuthor("device-123") } returns flowOf(emptyList())
+        every { syncPort.connectedPeersCount } returns MutableStateFlow(0)
 
-        viewModel = ProfileViewModel(userPreferences, cryptoManager)
+        viewModel = ProfileViewModel(userPreferences, cryptoManager, postRepository, syncPort)
     }
 
     @After
@@ -72,8 +83,62 @@ class ProfileViewModelTest {
 
     @Test
     fun `reset ui state returns to Idle`() {
+        viewModel.updateProfile("New Name", "New Bio")
         viewModel.resetUiState()
+        assertEquals(ProfileViewModel.UiState.Idle, viewModel.uiState.value)
+    }
 
-        assertTrue(viewModel.uiState.value is ProfileViewModel.UiState.Idle)
+    @Test
+    fun `handle is derived from profile name and device id`() = runTest(testDispatcher) {
+        backgroundScope.launch(testDispatcher) { viewModel.handle.collect { } }
+        advanceUntilIdle()
+        val handle = viewModel.handle.value
+        assertTrue(handle.startsWith("@"))
+        assertTrue(handle.contains("neo"))
+        assertTrue(handle.contains("device-123".takeLast(4)))
+    }
+
+    @Test
+    fun `handle includes last 4 chars of device id`() = runTest(testDispatcher) {
+        backgroundScope.launch(testDispatcher) { viewModel.handle.collect { } }
+        advanceUntilIdle()
+        val handle = viewModel.handle.value
+        assertEquals("device-123".takeLast(4), handle.takeLast(4))
+    }
+
+    @Test
+    fun `postCount reflects repository`() = runTest(testDispatcher) {
+        backgroundScope.launch(testDispatcher) { viewModel.postCount.collect { } }
+        advanceUntilIdle()
+        assertEquals(0, viewModel.postCount.value)
+    }
+
+    @Test
+    fun `userPosts reflects repository`() = runTest(testDispatcher) {
+        backgroundScope.launch(testDispatcher) { viewModel.userPosts.collect { } }
+        advanceUntilIdle()
+        assertTrue(viewModel.userPosts.value.isEmpty())
+    }
+
+    @Test
+    fun `connectedPeersCount reflects sync port`() = runTest(testDispatcher) {
+        backgroundScope.launch(testDispatcher) { viewModel.connectedPeersCount.collect { } }
+        advanceUntilIdle()
+        assertEquals(0, viewModel.connectedPeersCount.value)
+    }
+
+    @Test
+    fun `updateProfile error sets Error state`() = runTest(testDispatcher) {
+        val failingPrefs = mockk<UserPreferences>(relaxed = true)
+        every { failingPrefs.userName } returns "Test"
+        every { failingPrefs.userBio } returns "Bio"
+        every { failingPrefs.userName = any() } throws RuntimeException("Save failed")
+
+        val vm = ProfileViewModel(failingPrefs, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
+        vm.updateProfile("Name", "Bio")
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value is ProfileViewModel.UiState.Error)
+        assertEquals("Save failed", (vm.uiState.value as ProfileViewModel.UiState.Error).message)
     }
 }
