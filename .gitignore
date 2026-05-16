@@ -19,3 +19,11 @@ captures
 *.jks
 .DS_Store
 *.md
+!README.md
+!ABOUT.md
+*.png
+*.pdf
+*.mmd
+*.pptx
+*.log
+/Dark Mode Social Feed UI/
