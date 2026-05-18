@@ -27,9 +27,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import coil.compose.rememberAsyncImagePainter
 import com.neo.data.model.Post
 import com.neo.ui.theme.*
+import java.io.File
 
 /**
  * Post card — full-bleed image with dark scrim overlay.
@@ -41,14 +43,15 @@ fun EnhancedPostCard(
     onPostClick: () -> Unit,
     onLikeClick: () -> Unit,
     onCommentClick: () -> Unit,
+    onSaveClick: () -> Unit = {},
     isLiked: Boolean = false,
+    isSaved: Boolean = false,
     likeCount: Int = 0,
     commentCount: Int = 0,
     isLive: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var saved by remember { mutableStateOf(false) }
 
     val likeColor by animateColorAsState(
         targetValue = if (isLiked) NeoLime else TextWhite60,
@@ -60,7 +63,7 @@ fun EnhancedPostCard(
         label = "like_scale"
     )
     val bookmarkColor by animateColorAsState(
-        targetValue = if (saved) NeoLime else TextWhite60,
+        targetValue = if (isSaved) NeoLime else TextWhite60,
         label = "bookmark_color"
     )
 
@@ -251,12 +254,12 @@ fun EnhancedPostCard(
                     }
 
                     Icon(
-                        imageVector = if (saved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                        imageVector = if (isSaved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
                         contentDescription = "Save",
                         tint = bookmarkColor,
                         modifier = Modifier
                             .size(20.dp)
-                            .clickable { saved = !saved }
+                            .clickable { onSaveClick() }
                     )
                 }
             }
@@ -271,10 +274,33 @@ private fun formatTimestamp(timestamp: Long): String {
 }
 
 private fun sharePost(context: Context, post: Post) {
-    val intent = Intent(Intent.ACTION_SEND).apply {
-        type = "text/plain"
-        putExtra(Intent.EXTRA_TEXT, "Check out this post by ${post.authorName}:\n\n${post.content}")
-        putExtra(Intent.EXTRA_SUBJECT, "Neo Post")
+    val deepLink = "neo://posts/${post.id}"
+    val preview = post.content.take(120)
+    val shareText = buildString {
+        appendLine("Check out this post on Neo")
+        appendLine()
+        appendLine(preview)
+        appendLine()
+        append(deepLink)
     }
-    context.startActivity(Intent.createChooser(intent, "Share post via"))
+
+    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "*/*"
+        putExtra(Intent.EXTRA_TEXT, shareText)
+        putExtra(Intent.EXTRA_SUBJECT, "Neo Post by ${post.authorName}")
+
+        if (post.imageHash != null) {
+            val imageFile = File(context.filesDir, "images/${post.imageHash}.jpg")
+            if (imageFile.exists()) {
+                val uri = FileProvider.getUriForFile(
+                    context, "${context.packageName}.fileprovider", imageFile
+                )
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        }
+    }
+    runCatching {
+        context.startActivity(Intent.createChooser(shareIntent, "Share post via"))
+    }
 }

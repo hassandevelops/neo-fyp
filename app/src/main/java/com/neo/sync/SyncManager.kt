@@ -14,6 +14,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -47,8 +48,8 @@ class SyncManager @Inject constructor(
     }
 
     private fun setupMessageRouting(service: BluetoothService) {
-        service.onMessageReceived = { peerAddress, message ->
-            scope.launch {
+        scope.launch {
+            service.allIncomingMessages.collectLatest { (peerAddress, message) ->
                 when (message) {
                     is Message.Handshake -> {
                         gossipProtocol.handleHandshake(message, peerAddress)
@@ -184,8 +185,8 @@ class SyncManager @Inject constructor(
     suspend fun handleSyncRequest(request: Message.SyncRequest, peerAddress: String) {
         val service = bluetoothService ?: return
         
-        // Get posts newer than requested timestamp
-        val posts = postRepository.getPostsAfter(request.lastTimestamp)
+        // Get posts newer than requested timestamp (using local firstSeenTimestamp to avoid clock skew)
+        val posts = postRepository.getPostsAfterLocalTime(request.lastTimestamp)
         
         if (posts.isEmpty()) {
             Log.d(TAG, "No new posts to send to $peerAddress")

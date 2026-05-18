@@ -69,7 +69,7 @@ fun NeoTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = NeoBlack.toArgb()
+            window.statusBarColor = 0
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false
         }
     }

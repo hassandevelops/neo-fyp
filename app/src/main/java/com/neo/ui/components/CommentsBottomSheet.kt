@@ -39,19 +39,22 @@ fun CommentsBottomSheet(
 
     LaunchedEffect(replyingTo) {
         if (replyingTo != null) {
-            delay(100)
+            delay(200)
             focusRequester.requestFocus()
         }
     }
 
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         modifier = modifier
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight()
+                .fillMaxHeight(0.9f)
                 .padding(horizontal = 16.dp)
                 .imePadding()
         ) {
@@ -137,7 +140,8 @@ fun CommentsBottomSheet(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .navigationBarsPadding(),
+                    .navigationBarsPadding()
+                    .imePadding(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedTextField(
@@ -185,8 +189,6 @@ fun CommentsBottomSheet(
                     )
                 }
             }
-
-            Spacer(Modifier.height(16.dp))
         }
     }
 }

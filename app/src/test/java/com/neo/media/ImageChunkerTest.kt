@@ -1,5 +1,6 @@
 package com.neo.media
 
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -128,7 +129,7 @@ class ImageChunkerTest {
     }
     
     @Test
-    fun `test ChunkAssemblyManager tracks progress`() {
+    fun `test ChunkAssemblyManager tracks progress`() = runBlocking {
         // Arrange
         val manager = ImageChunker.ChunkAssemblyManager()
         val imageData = "G".repeat(10000)
@@ -153,7 +154,7 @@ class ImageChunkerTest {
     }
     
     @Test
-    fun `test ChunkAssemblyManager handles duplicate chunks`() {
+    fun `test ChunkAssemblyManager handles duplicate chunks`() = runBlocking {
         // Arrange
         val manager = ImageChunker.ChunkAssemblyManager()
         val imageData = "H".repeat(5000)

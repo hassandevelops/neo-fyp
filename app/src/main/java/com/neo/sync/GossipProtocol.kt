@@ -20,8 +20,11 @@ import com.neo.di.ApplicationScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.security.MessageDigest
 import javax.inject.Inject
@@ -53,10 +56,14 @@ class GossipProtocol @Inject constructor(
     }
 
     private var bluetoothService: BluetoothService? = null
-    private val chunkAssemblyManager = ImageChunker.ChunkAssemblyManager()
-    private val _connectedPeersCount = MutableStateFlow(0)
+    private val chunkAssemblyManager = ImageChunker.ChunkAssemblyManager(scope)
+    private val _connectedPeers = MutableStateFlow<List<String>>(emptyList())
+    private var blockedUserIds: Set<String> = emptySet()
 
-    override val connectedPeersCount: StateFlow<Int> = _connectedPeersCount.asStateFlow()
+    override val connectedPeersCount: StateFlow<Int> = _connectedPeers
+        .map { it.size }
+        .stateIn(scope, SharingStarted.Eagerly, 0)
+    override val connectedPeers: StateFlow<List<String>> = _connectedPeers.asStateFlow()
 
     /**
      * Set the Bluetooth service for message broadcasting.
@@ -65,7 +72,13 @@ class GossipProtocol @Inject constructor(
         this.bluetoothService = service
         scope.launch {
             service.connectedPeers.collect { peers ->
-                _connectedPeersCount.value = peers.size
+                _connectedPeers.value = peers
+            }
+        }
+        // Cache blocked users in memory to avoid DB queries on hot gossip path
+        scope.launch {
+            blockedUserRepository.getAllBlocked().collect { blocked ->
+                blockedUserIds = blocked.map { it.blockedUserId }.toHashSet()
             }
         }
     }
@@ -208,7 +221,7 @@ class GossipProtocol @Inject constructor(
         }
 
         // Check if author is blocked
-        if (blockedUserRepository.isBlocked(postBroadcast.authorId)) {
+        if (postBroadcast.authorId in blockedUserIds) {
             Log.w(TAG, "Post from blocked user ${postBroadcast.authorId}, ignoring")
             return
         }
@@ -345,7 +358,7 @@ class GossipProtocol @Inject constructor(
         val peerAddresses = service.getConnectedPeerAddresses().filter { it != excludePeerAddress }
         for (peerAddress in peerAddresses) {
             ackManager.sendWithAck(
-                messageId = "${post.id}_forward",
+                messageId = "${post.id}_forward_${peerAddress}",
                 message = message,
                 peerAddress = peerAddress,
                 sendFunction = { msg, addr -> service.sendMessage(addr, msg) }
@@ -474,7 +487,7 @@ class GossipProtocol @Inject constructor(
         }
 
         // Check if author is blocked
-        if (blockedUserRepository.isBlocked(commentBroadcast.authorId)) {
+        if (commentBroadcast.authorId in blockedUserIds) {
             Log.w(TAG, "Comment from blocked user ${commentBroadcast.authorId}, ignoring")
             return
         }
@@ -612,7 +625,7 @@ class GossipProtocol @Inject constructor(
         }
 
         // Check if author is blocked
-        if (blockedUserRepository.isBlocked(reactionBroadcast.userId)) {
+        if (reactionBroadcast.userId in blockedUserIds) {
             Log.w(TAG, "Reaction from blocked user ${reactionBroadcast.userId}, ignoring")
             return
         }

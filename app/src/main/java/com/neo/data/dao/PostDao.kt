@@ -61,11 +61,18 @@ interface PostDao {
     suspend fun getPostsPaginated(limit: Int, offset: Int): List<Post>
     
     /**
-     * Get posts created after a specific timestamp.
-     * Used for sync operations.
+     * Get posts created after a specific timestamp, using the author's clock.
+     * Kept for reference / legacy usage. For sync, prefer getPostsAfterLocalTime.
      */
     @Query("SELECT * FROM posts WHERE timestamp > :afterTimestamp ORDER BY timestamp ASC")
     suspend fun getPostsAfter(afterTimestamp: Long): List<Post>
+
+    /**
+     * Get posts first received after a specific timestamp (local clock).
+     * Used for sync operations to avoid clock skew issues.
+     */
+    @Query("SELECT * FROM posts WHERE firstSeenTimestamp > :afterTimestamp ORDER BY firstSeenTimestamp ASC LIMIT 200")
+    suspend fun getPostsAfterLocalTime(afterTimestamp: Long): List<Post>
     
     /**
      * Get a specific post by ID.

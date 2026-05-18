@@ -1,9 +1,12 @@
 package com.neo.ui.viewmodel
 
+import androidx.lifecycle.SavedStateHandle
 import com.neo.data.model.ReactionType
 import com.neo.data.repository.CommentRepository
 import com.neo.data.repository.NotificationRepository
+import com.neo.data.repository.PostRepository
 import com.neo.data.repository.ReactionRepository
+import com.neo.data.repository.SavedPostRepository
 import com.neo.domain.usecase.CreateCommentUseCase
 import com.neo.domain.usecase.CreateReactionUseCase
 import com.neo.domain.usecase.DeleteReactionUseCase
@@ -21,6 +24,8 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class PostDetailViewModelTest {
 
+    private lateinit var savedStateHandle: SavedStateHandle
+    private lateinit var postRepository: PostRepository
     private lateinit var commentRepository: CommentRepository
     private lateinit var createCommentUseCase: CreateCommentUseCase
     private lateinit var reactionRepository: ReactionRepository
@@ -28,11 +33,15 @@ class PostDetailViewModelTest {
     private lateinit var deleteReactionUseCase: DeleteReactionUseCase
     private lateinit var cryptoManager: CryptoManager
     private lateinit var notificationRepository: NotificationRepository
+    private lateinit var savedPostRepository: SavedPostRepository
     private val testDispatcher = UnconfinedTestDispatcher()
 
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
+        savedStateHandle = mockk()
+        every { savedStateHandle.get<String>(any()) } returns "post-1"
+        postRepository = mockk()
         commentRepository = mockk()
         createCommentUseCase = mockk()
         reactionRepository = mockk()
@@ -40,6 +49,7 @@ class PostDetailViewModelTest {
         deleteReactionUseCase = mockk()
         cryptoManager = mockk(relaxed = true)
         notificationRepository = mockk(relaxed = true)
+        savedPostRepository = mockk(relaxed = true)
     }
 
     @After
@@ -49,14 +59,17 @@ class PostDetailViewModelTest {
 
     private fun createViewModel(): PostDetailViewModel {
         return PostDetailViewModel(
+            savedStateHandle = savedStateHandle,
             application = mockk(relaxed = true),
+            postRepository = postRepository,
             commentRepository = commentRepository,
             createCommentUseCase = createCommentUseCase,
             reactionRepository = reactionRepository,
             createReactionUseCase = createReactionUseCase,
             deleteReactionUseCase = deleteReactionUseCase,
             cryptoManager = cryptoManager,
-            notificationRepository = notificationRepository
+            notificationRepository = notificationRepository,
+            savedPostRepository = savedPostRepository
         )
     }
 

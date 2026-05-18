@@ -6,16 +6,22 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.os.Bundle
 import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
@@ -64,6 +70,9 @@ class MainActivity : ComponentActivity() {
         }
     }
     
+    private var showPermissionRationale by mutableStateOf(false)
+    private val deepLinkIntent = mutableStateOf<Intent?>(null)
+
     // Permission launcher
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -71,11 +80,17 @@ class MainActivity : ComponentActivity() {
         val allGranted = permissions.values.all { it }
         if (allGranted) {
             startBluetoothService()
+        } else {
+            showPermissionRationale = true
         }
     }
     
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Handle the splash screen transition.
+        window.requestFeature(android.view.Window.FEATURE_NO_TITLE)
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        deepLinkIntent.value = intent
+        
         // Handle the splash screen transition.
         var keepSplashOnScreen = true
         val delay = 1500L
@@ -88,21 +103,48 @@ class MainActivity : ComponentActivity() {
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             keepSplashOnScreen = false
         }, delay)
-        super.onCreate(savedInstanceState)
         
         setContent {
+            if (showPermissionRationale) {
+                AlertDialog(
+                    onDismissRequest = { showPermissionRationale = false },
+                    title = { Text("Bluetooth Required") },
+                    text = { Text("Neo needs Bluetooth to discover and connect with nearby peers. Please grant Bluetooth permissions in Settings.") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            showPermissionRationale = false
+                            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                data = Uri.fromParts("package", packageName, null)
+                            }
+                            startActivity(intent)
+                        }) { Text("Open Settings") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showPermissionRationale = false }) { Text("Cancel") }
+                    }
+                )
+            }
             NeoTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    EnhancedNeoNavigation(viewModel = viewModel, userPreferences = userPreferences)
+                    EnhancedNeoNavigation(
+                        viewModel = viewModel,
+                        userPreferences = userPreferences,
+                        deepLinkIntent = deepLinkIntent.value
+                    )
                 }
             }
         }
         
         // Request permissions and start service
         requestPermissionsAndStartService()
+    }
+    
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        deepLinkIntent.value = intent
     }
     
     override fun onStart() {

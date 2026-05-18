@@ -2,12 +2,16 @@ package com.neo.ui.viewmodel
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.neo.data.model.Notification
+import com.neo.data.model.Post
 import com.neo.data.model.ReactionType
 import com.neo.data.repository.CommentRepository
 import com.neo.data.repository.NotificationRepository
+import com.neo.data.repository.PostRepository
 import com.neo.data.repository.ReactionRepository
+import com.neo.data.repository.SavedPostRepository
 import com.neo.domain.usecase.CreateCommentUseCase
 import com.neo.domain.usecase.CreateReactionUseCase
 import com.neo.domain.usecase.DeleteReactionUseCase
@@ -16,10 +20,14 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -31,15 +39,32 @@ data class PostStats(
 
 @HiltViewModel
 class PostDetailViewModel @Inject constructor(
+    private val savedStateHandle: SavedStateHandle,
     application: Application,
+    private val postRepository: PostRepository,
     private val commentRepository: CommentRepository,
     private val createCommentUseCase: CreateCommentUseCase,
     private val reactionRepository: ReactionRepository,
     private val createReactionUseCase: CreateReactionUseCase,
     private val deleteReactionUseCase: DeleteReactionUseCase,
     private val cryptoManager: CryptoManager,
-    private val notificationRepository: NotificationRepository
+    private val notificationRepository: NotificationRepository,
+    private val savedPostRepository: SavedPostRepository
 ) : AndroidViewModel(application) {
+
+    private val postId: String? = savedStateHandle.get<String>("postId")
+
+    var loadAttempted = false
+        private set
+
+    val post: StateFlow<Post?> = flow {
+        if (postId != null) {
+            emit(postRepository.getPostById(postId))
+        } else {
+            emit(null)
+        }
+    }.onEach { loadAttempted = true }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     private val _uiState = MutableStateFlow<UiState>(UiState.Idle)
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
@@ -160,6 +185,16 @@ class PostDetailViewModel @Inject constructor(
                 }
             )
         }
+    }
+
+    fun toggleSave(postId: String) {
+        viewModelScope.launch {
+            savedPostRepository.toggle(postId)
+        }
+    }
+
+    fun observeIsSaved(postId: String): Flow<Boolean> {
+        return savedPostRepository.observeIsSaved(postId)
     }
 
     fun resetUiState() {

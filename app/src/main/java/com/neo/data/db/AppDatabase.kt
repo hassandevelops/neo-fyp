@@ -12,12 +12,14 @@ import com.neo.data.dao.BlockedUserDao
 import com.neo.data.dao.CommentDao
 import com.neo.data.dao.NotificationDao
 import com.neo.data.dao.ReactionDao
+import com.neo.data.dao.SavedPostDao
 import com.neo.data.model.Device
 import com.neo.data.model.Post
 import com.neo.data.model.BlockedUser
 import com.neo.data.model.Comment
 import com.neo.data.model.Reaction
 import com.neo.data.model.Notification
+import com.neo.data.model.SavedPost
 
 /**
  * Room database for Neo app.
@@ -30,10 +32,11 @@ import com.neo.data.model.Notification
         BlockedUser::class,
         Comment::class,
         Reaction::class,
-        Notification::class
+        Notification::class,
+        SavedPost::class
     ],
-    version = 7,
-    exportSchema = false
+    version = 8,
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
 
@@ -43,6 +46,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun commentDao(): CommentDao
     abstract fun reactionDao(): ReactionDao
     abstract fun notificationDao(): NotificationDao
+    abstract fun savedPostDao(): SavedPostDao
 
     companion object {
         const val DATABASE_NAME = "neo_database"
@@ -217,6 +221,18 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS saved_posts (
+                        postId TEXT NOT NULL PRIMARY KEY,
+                        savedAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_saved_posts_savedAt ON saved_posts(savedAt)")
+            }
+        }
+
         private fun getTableColumns(database: SupportSQLiteDatabase, tableName: String): Set<String> {
             val columns = mutableSetOf<String>()
             database.query("PRAGMA table_info($tableName)").use { cursor ->
@@ -241,7 +257,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_3_4,
                         MIGRATION_4_5,
                         MIGRATION_5_6,
-                        MIGRATION_6_7
+                        MIGRATION_6_7,
+                        MIGRATION_7_8
                     )
                     .build()
                 INSTANCE = instance

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.neo.data.model.Post
 import com.neo.data.preferences.UserPreferences
 import com.neo.data.repository.PostRepository
+import com.neo.data.repository.SavedPostRepository
 import com.neo.domain.port.ISyncPort
 import com.neo.security.CryptoManager
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -12,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -22,6 +24,7 @@ class ProfileViewModel @Inject constructor(
     private val userPreferences: UserPreferences,
     private val cryptoManager: CryptoManager,
     private val postRepository: PostRepository,
+    private val savedPostRepository: SavedPostRepository,
     private val syncPort: ISyncPort
 ) : ViewModel() {
 
@@ -47,6 +50,17 @@ class ProfileViewModel @Inject constructor(
     val userPosts: StateFlow<List<Post>> = postRepository.getPostsByAuthor(deviceId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val savedPostIds: StateFlow<Set<String>> = savedPostRepository.observeSavedPostIds()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+
+    val savedPosts: StateFlow<List<Post>> = combine(
+        savedPostRepository.observeSavedPostIds(),
+        postRepository.getAllPosts()
+    ) { ids, allPosts ->
+        allPosts.filter { it.id in ids }
+            .sortedByDescending { post -> ids.indexOf(post.id) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     private val _uiState = MutableStateFlow<UiState>(UiState.Idle)
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
@@ -69,6 +83,12 @@ class ProfileViewModel @Inject constructor(
             } catch (e: Exception) {
                 _uiState.value = UiState.Error(e.message ?: "Failed to save profile")
             }
+        }
+    }
+
+    fun toggleSave(postId: String) {
+        viewModelScope.launch {
+            savedPostRepository.toggle(postId)
         }
     }
 

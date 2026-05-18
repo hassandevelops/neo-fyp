@@ -6,8 +6,10 @@ import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import java.io.BufferedReader
 import java.io.IOException
 import java.io.InputStream
+import java.io.InputStreamReader
 import java.io.OutputStream
 import java.util.UUID
 
@@ -23,6 +25,7 @@ class PeerConnection(
     companion object {
         private const val TAG = "PeerConnection"
         private const val MESSAGE_DELIMITER = "\n"
+        private const val MAX_MESSAGE_BYTES = 4 * 1024 * 1024   // 4 MB hard ceiling
     }
     
     private var inputStream: InputStream? = null
@@ -73,37 +76,17 @@ class PeerConnection(
      * Listen for incoming messages from the peer.
      */
     private suspend fun listenForMessages() {
-        val buffer = ByteArray(1024)
-        var messageBuffer = StringBuilder()
-        
         try {
-            while (isConnected && inputStream != null) {
-                val bytesRead = inputStream!!.read(buffer)
-                if (bytesRead == -1) {
-                    // End of stream
-                    break
+            val reader = inputStream?.bufferedReader(Charsets.UTF_8) ?: return
+            while (isConnected) {
+                val line = reader.readLine() ?: break   // null = stream closed
+                if (line.length > MAX_MESSAGE_BYTES) {
+                    Log.w(TAG, "Oversized message (${line.length} bytes), dropping")
+                    continue
                 }
-                
-                val data = String(buffer, 0, bytesRead)
-                messageBuffer.append(data)
-                
-                // Process complete messages (delimited by newline)
-                var delimiterIndex = messageBuffer.indexOf(MESSAGE_DELIMITER)
-                while (delimiterIndex != -1) {
-                    val messageJson = messageBuffer.substring(0, delimiterIndex)
-                    messageBuffer.delete(0, delimiterIndex + MESSAGE_DELIMITER.length)
-                    
-                    // Deserialize and emit message
-                    val message = MessageProtocol.deserialize(messageJson)
-                    if (message != null) {
-                        _receivedMessages.emit(message)
-                        Log.d(TAG, "Received message: ${message::class.simpleName}")
-                    } else {
-                        Log.w(TAG, "Failed to deserialize message: $messageJson")
-                    }
-                    
-                    delimiterIndex = messageBuffer.indexOf(MESSAGE_DELIMITER)
-                }
+                val message = MessageProtocol.deserialize(line) ?: continue
+                _receivedMessages.emit(message)
+                Log.d(TAG, "Received message: ${message::class.simpleName}")
             }
         } catch (e: IOException) {
             Log.e(TAG, "Error reading from stream: ${e.message}")

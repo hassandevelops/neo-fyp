@@ -2,6 +2,7 @@ package com.neo.ui.viewmodel
 
 import com.neo.data.preferences.UserPreferences
 import com.neo.data.repository.PostRepository
+import com.neo.data.repository.SavedPostRepository
 import com.neo.domain.port.ISyncPort
 import com.neo.security.CryptoManager
 import io.mockk.*
@@ -26,6 +27,7 @@ class ProfileViewModelTest {
     private val userPreferences = UserPreferences(RuntimeEnvironment.getApplication())
     private val cryptoManager: CryptoManager = mockk(relaxed = true)
     private val postRepository: PostRepository = mockk()
+    private val savedPostRepository: SavedPostRepository = mockk()
     private val syncPort: ISyncPort = mockk()
     private val testDispatcher = StandardTestDispatcher()
 
@@ -39,9 +41,11 @@ class ProfileViewModelTest {
         every { cryptoManager.getDeviceId() } returns "device-123"
         every { postRepository.getPostCountForAuthor("device-123") } returns flowOf(0)
         every { postRepository.getPostsByAuthor("device-123") } returns flowOf(emptyList())
+        every { postRepository.getAllPosts() } returns flowOf(emptyList())
         every { syncPort.connectedPeersCount } returns MutableStateFlow(0)
+        every { savedPostRepository.observeSavedPostIds() } returns MutableStateFlow(emptySet())
 
-        viewModel = ProfileViewModel(userPreferences, cryptoManager, postRepository, syncPort)
+        viewModel = ProfileViewModel(userPreferences, cryptoManager, postRepository, savedPostRepository, syncPort)
     }
 
     @After
@@ -134,7 +138,7 @@ class ProfileViewModelTest {
         every { failingPrefs.userBio } returns "Bio"
         every { failingPrefs.userName = any() } throws RuntimeException("Save failed")
 
-        val vm = ProfileViewModel(failingPrefs, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
+        val vm = ProfileViewModel(failingPrefs, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
         vm.updateProfile("Name", "Bio")
         advanceUntilIdle()
 

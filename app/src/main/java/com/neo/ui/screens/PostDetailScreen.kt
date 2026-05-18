@@ -2,28 +2,36 @@ package com.neo.ui.screens
 
 import android.content.Context
 import android.content.Intent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.core.content.FileProvider
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.rememberAsyncImagePainter
 import com.neo.data.model.Post
 import com.neo.ui.components.CommentsBottomSheet
+import com.neo.ui.components.FullScreenMediaViewer
 import com.neo.ui.components.GradientBackground
 import com.neo.ui.theme.*
 import androidx.compose.material3.MaterialTheme
 import com.neo.ui.viewmodel.PostDetailViewModel
+import java.io.File
 import kotlinx.coroutines.launch
 
 @Composable
@@ -40,10 +48,18 @@ fun PostDetailScreen(
     var commentText by remember { mutableStateOf("") }
     var showCommentsSheet by remember { mutableStateOf(false) }
     val hasLiked by viewModel.hasUserLikedPostFlow(post.id).collectAsState(initial = false)
+    val isSaved by viewModel.observeIsSaved(post.id).collectAsState(initial = false)
     val topLevelComments by viewModel
         .getTopLevelCommentsForPost(post.id)
         .collectAsState(initial = emptyList())
     val uiState by viewModel.uiState.collectAsState()
+
+    val imagePath = remember(post.imageHash) {
+        post.imageHash?.let {
+            File(context.filesDir, "images/$it.jpg").takeIf { f -> f.exists() }
+        }
+    }
+    var selectedImageForViewer by remember { mutableStateOf<File?>(null) }
 
     LaunchedEffect(Unit) {
         viewModel.resetUiState()
@@ -156,6 +172,31 @@ fun PostDetailScreen(
                             
                             Spacer(modifier = Modifier.height(16.dp))
                             
+                            // Post image
+                            if (imagePath != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable { selectedImageForViewer = imagePath },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Image(
+                                        painter = rememberAsyncImagePainter(model = imagePath),
+                                        contentDescription = "Post image",
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .aspectRatio(
+                                                if (post.imageWidth != null && post.imageHeight != null && post.imageHeight > 0)
+                                                    post.imageWidth.toFloat() / post.imageHeight.toFloat()
+                                                else 16f / 9f
+                                            ),
+                                        contentScale = ContentScale.Fit
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
+                            
                             // Content
                             Text(
                                 text = post.content,
@@ -188,6 +229,13 @@ fun PostDetailScreen(
                                         imageVector = if (hasLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                                         contentDescription = "Like",
                                         tint = if (hasLiked) MaterialTheme.colorScheme.error else TextWhite60
+                                    )
+                                }
+                                IconButton(onClick = { viewModel.toggleSave(post.id) }) {
+                                    Icon(
+                                        imageVector = if (isSaved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                                        contentDescription = "Save",
+                                        tint = if (isSaved) NeoLime else TextWhite60
                                     )
                                 }
                                 IconButton(onClick = { showCommentsSheet = true }) {
@@ -336,21 +384,53 @@ fun PostDetailScreen(
                 }
             )
         }
+        
+        // Full screen media viewer
+        FullScreenMediaViewer(
+            images = listOfNotNull(imagePath),
+            initialIndex = 0,
+            visible = selectedImageForViewer != null,
+            onDismiss = { selectedImageForViewer = null }
+        )
     }
 }
 }
 
 /**
- * Share post content using Android's native share dialog
+ * Share post content using Android's native share dialog.
+ * Includes a deep link (neo://posts/{postId}) so recipients can open the exact post.
+ * Attaches the post image if available for richer previews.
  */
 private fun sharePost(context: Context, post: Post) {
-    val shareIntent = Intent().apply {
-        action = Intent.ACTION_SEND
-        type = "text/plain"
-        putExtra(Intent.EXTRA_TEXT, "Check out this post by ${post.authorName}:\n\n${post.content}")
-        putExtra(Intent.EXTRA_SUBJECT, "Neo Post")
+    val deepLink = "neo://posts/${post.id}"
+    val preview = post.content.take(120)
+    val shareText = buildString {
+        appendLine("Check out this post on Neo")
+        appendLine()
+        appendLine(preview)
+        appendLine()
+        append(deepLink)
     }
-    context.startActivity(Intent.createChooser(shareIntent, "Share post via"))
+
+    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "*/*"
+        putExtra(Intent.EXTRA_TEXT, shareText)
+        putExtra(Intent.EXTRA_SUBJECT, "Neo Post by ${post.authorName}")
+
+        if (post.imageHash != null) {
+            val imageFile = File(context.filesDir, "images/${post.imageHash}.jpg")
+            if (imageFile.exists()) {
+                val uri = FileProvider.getUriForFile(
+                    context, "${context.packageName}.fileprovider", imageFile
+                )
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        }
+    }
+    runCatching {
+        context.startActivity(Intent.createChooser(shareIntent, "Share post via"))
+    }
 }
 
 private fun formatTimestamp(timestamp: Long): String {

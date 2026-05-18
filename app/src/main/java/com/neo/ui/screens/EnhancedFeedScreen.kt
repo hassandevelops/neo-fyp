@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.ExperimentalMaterialApi
@@ -26,6 +27,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neo.data.model.Post
@@ -60,6 +63,7 @@ fun EnhancedFeedScreen(
     val visiblePosts = pagedPosts.itemSnapshotList.items
     val postStatsMap by postDetailViewModel.getPostStatsMapFlow(visiblePosts.map { it.id })
         .collectAsState(initial = emptyMap())
+    val savedPostIds by viewModel.savedPostIds.collectAsState()
     var selectedPostForComments by remember { mutableStateOf<Post?>(null) }
     val refreshLoadState = pagedPosts.loadState.refresh
     val appendLoadState = pagedPosts.loadState.append
@@ -73,132 +77,170 @@ fun EnhancedFeedScreen(
         }
     )
 
+    val density = LocalDensity.current
+    var headerHeightPx by remember { mutableIntStateOf(120) }
+    val headerHeightDp by remember {
+        derivedStateOf {
+            with(density) { headerHeightPx.toDp() }
+        }
+    }
+
+    val lazyListState = rememberLazyListState()
+    var previousIndex by remember { mutableIntStateOf(0) }
+    var previousScrollOffset by remember { mutableIntStateOf(0) }
+    val isScrollingDown by remember {
+        derivedStateOf {
+            val currentIndex = lazyListState.firstVisibleItemIndex
+            val currentOffset = lazyListState.firstVisibleItemScrollOffset
+            when {
+                currentIndex > previousIndex -> true
+                currentIndex < previousIndex -> false
+                else -> currentOffset > previousScrollOffset
+            }.also {
+                previousIndex = currentIndex
+                previousScrollOffset = currentOffset
+            }
+        }
+    }
+    val headerOffsetY by animateDpAsState(
+        targetValue = if (isScrollingDown) -headerHeightDp else 0.dp,
+        animationSpec = tween(durationMillis = 250),
+        label = "header_offset"
+    )
+
     Box(modifier = modifier.fillMaxSize()) {
         GradientBackground {
-            Column(modifier = Modifier.fillMaxSize()) {
-                EnhancedHeader(
-                    onProfileClick = onNavigateToProfile,
-                    onSearchClick = onNavigateToSearch,
-                    onNotificationsClick = onNavigateToNotifications,
-                    onSettingsClick = onNavigateToSettings,
-                    notificationCount = notificationCount
-                )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pullRefresh(pullRefreshState)
+            ) {
+                when {
+                    refreshLoadState is LoadState.Loading && pagedPosts.itemCount == 0 -> {
+                        LoadingShimmer()
+                    }
 
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .pullRefresh(pullRefreshState)
-                ) {
-                    when {
-                        refreshLoadState is LoadState.Loading && pagedPosts.itemCount == 0 -> {
-                            LoadingShimmer()
-                        }
+                    refreshLoadState is LoadState.Error && pagedPosts.itemCount == 0 -> {
+                        ErrorState(
+                            message = refreshLoadState.error.message ?: "Unable to load feed",
+                            onRetry = {
+                                viewModel.refresh()
+                                pagedPosts.retry()
+                            }
+                        )
+                    }
 
-                        refreshLoadState is LoadState.Error && pagedPosts.itemCount == 0 -> {
-                            ErrorState(
-                                message = refreshLoadState.error.message ?: "Unable to load feed",
-                                onRetry = {
-                                    viewModel.refresh()
-                                    pagedPosts.retry()
+                    pagedPosts.itemCount == 0 -> {
+                        EmptyState(
+                            onRefresh = {
+                                viewModel.refresh()
+                                pagedPosts.refresh()
+                            }
+                        )
+                    }
+
+                    else -> {
+                        LazyColumn(
+                            state = lazyListState,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(top = headerHeightDp, bottom = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            // BLE Mesh Status Card
+                            item {
+                                BLEMeshCard(
+                                    connectedPeers = connectedPeersCount,
+                                    onClick = onNavigateToBLEStatus
+                                )
+                            }
+
+                            // Posts
+                            items(
+                                count = pagedPosts.itemCount,
+                                key = pagedPosts.itemKey { it.id }
+                            ) { index ->
+                                val post = pagedPosts[index]
+                                if (post == null) {
+                                    ShimmerCard(
+                                        brush = Brush.linearGradient(
+                                            colors = listOf(NeoGray800, NeoGray700, NeoGray800)
+                                        ),
+                                        modifier = Modifier.padding(horizontal = 16.dp)
+                                    )
+                                    return@items
                                 }
-                            )
-                        }
+                                val stats = postStatsMap[post.id] ?: PostStats()
 
-                        pagedPosts.itemCount == 0 -> {
-                            EmptyState(
-                                onRefresh = {
-                                    viewModel.refresh()
-                                    pagedPosts.refresh()
-                                }
-                            )
-                        }
+                                EnhancedPostCard(
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                    post = post,
+                                    onPostClick = { onNavigateToPostDetail(post) },
+                                    onLikeClick = {
+                                        postDetailViewModel.toggleLike(
+                                            postId = post.id,
+                                            userName = currentUserName
+                                        )
+                                    },
+                                    onCommentClick = { selectedPostForComments = post },
+                                    onSaveClick = { viewModel.toggleSave(post.id) },
+                                    isLiked = stats.hasLiked,
+                                    isSaved = post.id in savedPostIds,
+                                    likeCount = stats.likeCount,
+                                    commentCount = stats.commentCount
+                                )
+                            }
 
-                        else -> {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxSize(),
-                                verticalArrangement = Arrangement.spacedBy(16.dp)
-                            ) {
-                                // BLE Mesh Status Card
+                            if (appendLoadState is LoadState.Loading) {
                                 item {
-                                    BLEMeshCard(
-                                        connectedPeers = connectedPeersCount,
-                                        onClick = onNavigateToBLEStatus
+                                    CircularProgressIndicator(
+                                        color = NeoLime,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(16.dp)
+                                            .wrapContentWidth(Alignment.CenterHorizontally)
                                     )
                                 }
+                            }
 
-                                // Posts
-                                items(
-                                    count = pagedPosts.itemCount,
-                                    key = pagedPosts.itemKey { it.id }
-                                ) { index ->
-                                    val post = pagedPosts[index]
-                                    if (post == null) {
-                                        ShimmerCard(
-                                            brush = Brush.linearGradient(
-                                                colors = listOf(NeoGray800, NeoGray700, NeoGray800)
-                                            ),
-                                            modifier = Modifier.padding(horizontal = 16.dp)
-                                        )
-                                        return@items
-                                    }
-                                    val stats = postStatsMap[post.id] ?: PostStats()
-
-                                    EnhancedPostCard(
-                                        modifier = Modifier.padding(horizontal = 16.dp),
-                                        post = post,
-                                        onPostClick = { onNavigateToPostDetail(post) },
-                                        onLikeClick = {
-                                            postDetailViewModel.toggleLike(
-                                                postId = post.id,
-                                                userName = currentUserName
-                                            )
-                                        },
-                                        onCommentClick = { selectedPostForComments = post },
-                                        isLiked = stats.hasLiked,
-                                        likeCount = stats.likeCount,
-                                        commentCount = stats.commentCount
+                            if (appendLoadState is LoadState.Error) {
+                                item {
+                                    AppendErrorState(
+                                        message = appendLoadState.error.message ?: "Unable to load more posts",
+                                        onRetry = { pagedPosts.retry() }
                                     )
                                 }
+                            }
 
-                                if (appendLoadState is LoadState.Loading) {
-                                    item {
-                                        CircularProgressIndicator(
-                                            color = NeoLime,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(16.dp)
-                                                .wrapContentWidth(Alignment.CenterHorizontally)
-                                        )
-                                    }
-                                }
-
-                                if (appendLoadState is LoadState.Error) {
-                                    item {
-                                        AppendErrorState(
-                                            message = appendLoadState.error.message ?: "Unable to load more posts",
-                                            onRetry = { pagedPosts.retry() }
-                                        )
-                                    }
-                                }
-
-                                // Bottom padding for nav bar
-                                item {
-                                    Spacer(modifier = Modifier.height(90.dp))
-                                }
+                            // Bottom padding for nav bar
+                            item {
+                                Spacer(modifier = Modifier.height(90.dp))
                             }
                         }
                     }
-
-                    PullRefreshIndicator(
-                        refreshing = isFeedRefreshing,
-                        state = pullRefreshState,
-                        modifier = Modifier.align(Alignment.TopCenter),
-                        backgroundColor = NeoGray900,
-                        contentColor = NeoLime
-                    )
                 }
+
+                PullRefreshIndicator(
+                    refreshing = isFeedRefreshing,
+                    state = pullRefreshState,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    backgroundColor = NeoGray900,
+                    contentColor = NeoLime
+                )
             }
         }
+
+        EnhancedHeader(
+            modifier = Modifier
+                .onGloballyPositioned { coords ->
+                    headerHeightPx = coords.size.height
+                }
+                .offset(y = headerOffsetY),
+            onProfileClick = onNavigateToProfile,
+            onSearchClick = onNavigateToSearch,
+            onNotificationsClick = onNavigateToNotifications,
+            onSettingsClick = onNavigateToSettings,
+            notificationCount = notificationCount
+        )
     }
 
     // Comments Bottom Sheet

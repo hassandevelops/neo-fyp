@@ -2,6 +2,7 @@ package com.neo.security
 
 import android.util.Log
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -45,7 +46,7 @@ class RateLimiter @Inject constructor() {
      */
     fun canCreatePost(deviceId: String): Boolean {
         val now = System.currentTimeMillis()
-        val timestamps = postTimestamps.getOrPut(deviceId) { mutableListOf() }
+        val timestamps = postTimestamps.getOrPut(deviceId) { CopyOnWriteArrayList() }
         
         // Remove timestamps outside the window
         timestamps.removeAll { it < now - windowMs }
@@ -73,7 +74,7 @@ class RateLimiter @Inject constructor() {
      */
     fun canCreateComment(deviceId: String): Boolean {
         val now = System.currentTimeMillis()
-        val timestamps = commentTimestamps.getOrPut(deviceId) { mutableListOf() }
+        val timestamps = commentTimestamps.getOrPut(deviceId) { CopyOnWriteArrayList() }
         
         // Remove timestamps outside the window
         timestamps.removeAll { it < now - windowMs }

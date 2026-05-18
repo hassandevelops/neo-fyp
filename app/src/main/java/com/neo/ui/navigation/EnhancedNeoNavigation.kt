@@ -5,14 +5,28 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
+import android.content.Intent
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
+import androidx.navigation.navDeepLink
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
@@ -20,6 +34,7 @@ import androidx.navigation.navArgument
 import com.neo.data.preferences.UserPreferences
 import com.neo.ui.components.EnhancedBottomNavigation
 import com.neo.ui.screens.*
+import com.neo.ui.theme.TextWhite60
 import com.neo.ui.viewmodel.CreatePostViewModel
 import com.neo.ui.viewmodel.FeedViewModel
 import com.neo.ui.viewmodel.NotificationsViewModel
@@ -34,12 +49,23 @@ import kotlinx.coroutines.launch
 fun EnhancedNeoNavigation(
     viewModel: FeedViewModel,
     userPreferences: UserPreferences,
+    deepLinkIntent: Intent? = null,
     modifier: Modifier = Modifier
 ) {
     val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
 
     var startDestination by remember { mutableStateOf(if (userPreferences.isOnboardingComplete) "feed" else "onboarding") }
+
+    // Handle deep link intents from cold start or onNewIntent
+    var lastHandledDeepLink by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(deepLinkIntent) {
+        val uri = deepLinkIntent?.dataString
+        if (deepLinkIntent?.action == Intent.ACTION_VIEW && uri != null && uri != lastHandledDeepLink) {
+            lastHandledDeepLink = uri
+            navController.handleDeepLink(deepLinkIntent)
+        }
+    }
 
     // Track current route for bottom navigation
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -48,8 +74,10 @@ fun EnhancedNeoNavigation(
     // Collect state from ViewModel
     val posts by viewModel.posts.collectAsState()
     val connectedPeersCount by viewModel.connectedPeersCount.collectAsState()
+    val connectedPeers by viewModel.connectedPeers.collectAsState()
     
     Scaffold(
+        containerColor = Color.Transparent,
         bottomBar = {
             // Show bottom nav only on main screens, not on create post or post detail
             if (currentRoute in listOf("feed", "search", "ble_status", "notifications", "profile")) {
@@ -69,7 +97,7 @@ fun EnhancedNeoNavigation(
         NavHost(
             navController = navController,
             startDestination = startDestination,
-            modifier = modifier.padding(paddingValues)
+            modifier = modifier.padding(bottom = paddingValues.calculateBottomPadding())
         ) {
             // Onboarding
             composable(
@@ -291,7 +319,7 @@ fun EnhancedNeoNavigation(
                 popExitTransition = { fadeOut(animationSpec = tween(0)) }
             ) {
             BLEMeshStatusScreen(
-                connectedPeers = List(connectedPeersCount) { "Peer $it" },
+                connectedPeers = connectedPeers.ifEmpty { List(connectedPeersCount) { "Peer $it" } },
                 onBack = { navController.popBackStack() }
             )
         }
@@ -300,24 +328,43 @@ fun EnhancedNeoNavigation(
         composable(
             route = "post_detail/{postId}",
             arguments = listOf(navArgument("postId") { type = NavType.StringType }),
+            deepLinks = listOf(navDeepLink { uriPattern = "neo://posts/{postId}" }),
             enterTransition = { fadeIn(animationSpec = tween(0)) },
             exitTransition = { fadeOut(animationSpec = tween(0)) },
             popEnterTransition = { fadeIn(animationSpec = tween(0)) },
             popExitTransition = { fadeOut(animationSpec = tween(0)) }
-        ) { backStackEntry ->
-            val postId = backStackEntry.arguments?.getString("postId")
-            val post = posts.find { it.id == postId }
+        ) {
+            val postDetailViewModel: com.neo.ui.viewmodel.PostDetailViewModel = hiltViewModel()
+            val post by postDetailViewModel.post.collectAsState()
             
-            if (post != null) {
-                val postDetailViewModel: com.neo.ui.viewmodel.PostDetailViewModel = hiltViewModel()
-                PostDetailScreen(
-                    post = post,
+            when {
+                post != null -> PostDetailScreen(
+                    post = post!!,
                     viewModel = postDetailViewModel,
                     currentUserName = userPreferences.userName,
                     onBack = { navController.popBackStack() }
                 )
-            }
+                postDetailViewModel.loadAttempted -> Box(
+                    Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            "Post not found",
+                            color = TextWhite60,
+                            fontSize = 18.sp
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        TextButton(onClick = { navController.popBackStack() }) {
+                            Text("Go back")
+                        }
+                    }
+                }
+                else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
             }
         }
     }
+}
 }

@@ -53,9 +53,14 @@ fun SearchScreen(
             // Header with search bar
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = NeoBlack.copy(alpha = 0.5f)
+                color = NeoBlack
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
+                ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -211,12 +216,13 @@ fun NotificationsScreen(
             // Header
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = NeoBlack.copy(alpha = 0.5f)
+                color = NeoBlack
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
+                        .statusBarsPadding()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -391,12 +397,13 @@ fun SettingsScreen(
             // Header
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = NeoBlack.copy(alpha = 0.5f)
+                color = NeoBlack
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
+                        .statusBarsPadding()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = onBack) {

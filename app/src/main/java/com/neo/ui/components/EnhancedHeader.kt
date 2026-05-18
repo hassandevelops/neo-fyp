@@ -54,7 +54,8 @@ fun EnhancedHeader(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .statusBarsPadding()
+                .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -82,9 +83,9 @@ fun EnhancedHeader(
                 }
 
                 Image(
-                    painter = painterResource(id = R.drawable.splash),
+                    painter = painterResource(id = R.drawable.splash_no_bg),
                     contentDescription = "Neo",
-                    modifier = Modifier.height(76.dp)
+                    modifier = Modifier.height(56.dp)
                 )
             }
 

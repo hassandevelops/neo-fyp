@@ -1,6 +1,15 @@
 package com.neo.media
 
+import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Utility class for chunking large image data for Bluetooth transmission.
@@ -109,70 +118,108 @@ class ImageChunker {
     
     /**
      * Manager for tracking chunk reassembly progress.
+     * Thread-safe with bounded concurrency and stale-entry timeout.
      */
-    class ChunkAssemblyManager {
-        private val receivedChunks = mutableMapOf<String, MutableList<ImageChunk>>()
-        
+    class ChunkAssemblyManager(private val scope: CoroutineScope? = null) {
+
+        companion object {
+            private const val TAG = "ChunkAssemblyManager"
+            private const val MAX_CONCURRENT_ASSEMBLIES = 10
+            private const val ASSEMBLY_TIMEOUT_MS = 60_000L
+        }
+
+        private data class Assembly(
+            val chunks: CopyOnWriteArrayList<ImageChunk> = CopyOnWriteArrayList(),
+            val startedAt: Long = System.currentTimeMillis()
+        )
+
+        private val assemblies = ConcurrentHashMap<String, Assembly>()
+        private val mutex = Mutex()
+
+        init {
+            scope?.launch {
+                while (isActive) {
+                    delay(30_000)
+                    sweepStaleAssemblies()
+                }
+            }
+        }
+
         /**
          * Add a received chunk.
          * 
          * @param chunk The received chunk
          * @return Complete image data if all chunks received, null otherwise
          */
-        fun addChunk(chunk: ImageChunk): String? {
-            val chunks = receivedChunks.getOrPut(chunk.postId) { mutableListOf() }
-            
+        suspend fun addChunk(chunk: ImageChunk): String? = mutex.withLock {
+            val imageId = chunk.postId
+
+            // Enforce max concurrent assemblies
+            if (!assemblies.containsKey(imageId) && assemblies.size >= MAX_CONCURRENT_ASSEMBLIES) {
+                Log.w(TAG, "Max concurrent assemblies reached ($MAX_CONCURRENT_ASSEMBLIES), dropping chunk for $imageId")
+                return@withLock null
+            }
+
+            val assembly = assemblies.getOrPut(imageId) { Assembly() }
+
             // Check if we already have this chunk
-            if (chunks.any { it.chunkIndex == chunk.chunkIndex }) {
-                android.util.Log.d(TAG, "Duplicate chunk ${chunk.chunkIndex} for post ${chunk.postId}")
-                return null
+            if (assembly.chunks.any { it.chunkIndex == chunk.chunkIndex }) {
+                Log.d(TAG, "Duplicate chunk ${chunk.chunkIndex} for post $imageId")
+                return@withLock null
             }
-            
-            chunks.add(chunk)
-            android.util.Log.d(TAG, "Received chunk ${chunk.chunkIndex}/${chunk.totalChunks} for post ${chunk.postId}")
-            
+
+            assembly.chunks.add(chunk)
+            Log.d(TAG, "Received chunk ${chunk.chunkIndex}/${chunk.totalChunks} for post $imageId")
+
             // Check if we have all chunks
-            if (chunks.size == chunk.totalChunks) {
+            if (assembly.chunks.size == chunk.totalChunks) {
+                assemblies.remove(imageId)
                 val chunker = ImageChunker()
-                val imageData = chunker.reassembleChunks(chunks)
-                
+                val imageData = chunker.reassembleChunks(assembly.chunks)
+
                 if (imageData != null) {
-                    // Clean up
-                    receivedChunks.remove(chunk.postId)
-                    android.util.Log.d(TAG, "Completed reassembly for post ${chunk.postId}")
+                    Log.d(TAG, "Completed reassembly for post $imageId")
                 }
-                
-                return imageData
+                return@withLock imageData
             }
-            
-            return null
+
+            return@withLock null
         }
-        
+
         /**
          * Get progress for a specific post.
-         * 
-         * @param postId ID of the post
-         * @return Pair of (received chunks, total chunks), or null if no chunks received
          */
-        fun getProgress(postId: String): Pair<Int, Int>? {
-            val chunks = receivedChunks[postId] ?: return null
+        fun getProgress(imageId: String): Pair<Int, Int>? {
+            val assembly = assemblies[imageId] ?: return null
+            val chunks = assembly.chunks
             if (chunks.isEmpty()) return null
             return Pair(chunks.size, chunks.first().totalChunks)
         }
-        
+
         /**
          * Clear chunks for a specific post (e.g., on timeout).
          */
-        fun clearChunks(postId: String) {
-            receivedChunks.remove(postId)
-            android.util.Log.d(TAG, "Cleared chunks for post $postId")
+        fun clearChunks(imageId: String) {
+            assemblies.remove(imageId)
+            Log.d(TAG, "Cleared chunks for post $imageId")
         }
-        
+
         /**
          * Get all posts currently being assembled.
          */
         fun getActiveAssemblies(): Set<String> {
-            return receivedChunks.keys
+            return assemblies.keys
+        }
+
+        private fun sweepStaleAssemblies() {
+            val now = System.currentTimeMillis()
+            val stale = assemblies.entries
+                .filter { (_, assembly) -> now - assembly.startedAt > ASSEMBLY_TIMEOUT_MS }
+                .map { it.key }
+            stale.forEach { imageId ->
+                Log.w(TAG, "Sweeping stale assembly for $imageId")
+                assemblies.remove(imageId)
+            }
         }
     }
 }

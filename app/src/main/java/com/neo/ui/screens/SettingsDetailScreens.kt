@@ -29,12 +29,13 @@ fun AccountSettingsScreen(
             // Header
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = NeoBlack.copy(alpha = 0.5f)
+                color = NeoBlack
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
+                        .statusBarsPadding()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = onBack) {
@@ -112,12 +113,13 @@ fun PrivacySettingsScreen(
             // Header
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = NeoBlack.copy(alpha = 0.5f)
+                color = NeoBlack
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
+                        .statusBarsPadding()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = onBack) {
@@ -202,12 +204,13 @@ fun NotificationSettingsScreen(
             // Header
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = NeoBlack.copy(alpha = 0.5f)
+                color = NeoBlack
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
+                        .statusBarsPadding()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = onBack) {
@@ -292,12 +295,13 @@ fun AboutScreen(
             // Header
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = NeoBlack.copy(alpha = 0.5f)
+                color = NeoBlack
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
+                        .statusBarsPadding()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = onBack) {

@@ -7,6 +7,7 @@ import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.neo.data.model.Post
 import com.neo.data.repository.NotificationRepository
+import com.neo.data.repository.SavedPostRepository
 import com.neo.domain.port.ISyncPort
 import com.neo.domain.usecase.GetFeedUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -26,7 +27,8 @@ class FeedViewModel @Inject constructor(
     application: Application,
     private val getFeedUseCase: GetFeedUseCase,
     private val syncPort: ISyncPort,
-    private val notificationRepository: NotificationRepository
+    private val notificationRepository: NotificationRepository,
+    private val savedPostRepository: SavedPostRepository
 ) : AndroidViewModel(application) {
 
     sealed class UiState {
@@ -52,9 +54,19 @@ class FeedViewModel @Inject constructor(
         .cachedIn(viewModelScope)
 
     val connectedPeersCount: StateFlow<Int> = syncPort.connectedPeersCount
+    val connectedPeers: StateFlow<List<String>> = syncPort.connectedPeers
 
     val notificationCount: StateFlow<Int> = notificationRepository.getUnreadCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val savedPostIds: StateFlow<Set<String>> = savedPostRepository.observeSavedPostIds()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+
+    fun toggleSave(postId: String) {
+        viewModelScope.launch {
+            savedPostRepository.toggle(postId)
+        }
+    }
 
     init {
         observePosts()

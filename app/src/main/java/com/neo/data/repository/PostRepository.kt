@@ -75,10 +75,18 @@ class PostRepository @Inject constructor(
     }
     
     /**
-     * Get posts created after a specific timestamp.
+     * Get posts created after a specific timestamp (author clock).
      */
     suspend fun getPostsAfter(timestamp: Long): List<Post> {
         return postDao.getPostsAfter(timestamp)
+    }
+
+    /**
+     * Get posts first received after a specific timestamp (local clock).
+     * Preferred for sync to avoid clock skew.
+     */
+    suspend fun getPostsAfterLocalTime(timestamp: Long): List<Post> {
+        return postDao.getPostsAfterLocalTime(timestamp)
     }
     
     /**

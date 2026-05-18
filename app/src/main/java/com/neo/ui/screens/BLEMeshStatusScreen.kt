@@ -82,7 +82,8 @@ fun BLEMeshStatusScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                    .statusBarsPadding()
+                    .padding(start = 20.dp, end = 20.dp, bottom = 16.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {

@@ -1,6 +1,8 @@
 package com.neo.sync
 
+import com.neo.bluetooth.BluetoothService
 import com.neo.bluetooth.Message
+import com.neo.data.model.BlockedUser
 import com.neo.data.model.Post
 import com.neo.data.model.Comment
 import com.neo.data.model.Reaction
@@ -15,7 +17,11 @@ import com.neo.security.RateLimiter
 import io.mockk.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
@@ -23,6 +29,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 class GossipProtocolTest {
 
@@ -113,7 +120,16 @@ class GossipProtocolTest {
     @Test
     fun `handleReceivedPost ignores blocked author`() = runTest {
         every { seenMessageCache.checkAndAdd(any()) } returns true
-        coEvery { blockedUserRepository.isBlocked(any()) } returns true
+        // Populate the in-memory blocked cache
+        val service = mockk<BluetoothService>(relaxed = true)
+        every { service.allIncomingMessages } returns emptyFlow()
+        every { service.connectedPeers } returns MutableStateFlow(emptyList())
+        val blockedFlow = MutableStateFlow(
+            listOf(BlockedUser(blockedUserId = "author-1", blockedAt = System.currentTimeMillis()))
+        )
+        every { blockedUserRepository.getAllBlocked() } returns blockedFlow
+        gossipProtocol.setBluetoothService(service)
+        advanceUntilIdle()
 
         gossipProtocol.handleReceivedPost(postBroadcast("post-1"), "peer-1")
 

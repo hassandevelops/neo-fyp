@@ -27,6 +27,7 @@ import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -38,8 +39,7 @@ import com.neo.R
 import com.neo.data.repository.NotificationRepository
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.*
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -84,8 +84,16 @@ class BluetoothService : Service() {
     private val _connectedPeers = MutableStateFlow<List<String>>(emptyList())
     val connectedPeers: StateFlow<List<String>> = _connectedPeers
     
-    // Callback for received messages
-    var onMessageReceived: ((String, Message) -> Unit)? = null
+    // Merged flow of all incoming messages from all peers
+    val allIncomingMessages: Flow<Pair<String, Message>>
+        get() {
+            if (connections.isEmpty()) return emptyFlow()
+            return connections.entries
+                .map { (address, connection) ->
+                    connection.receivedMessages.map { message -> address to message }
+                }
+                .let { flows -> merge(*flows.toTypedArray()) }
+        }
     
     inner class LocalBinder : Binder() {
         fun getService(): BluetoothService = this@BluetoothService
@@ -105,7 +113,11 @@ class BluetoothService : Service() {
         Log.d(TAG, "Service started")
         
         val notification = createNotification()
-        startForeground(NOTIFICATION_ID, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
         
         if (!isRunning) {
             startBluetoothOperations()
@@ -263,7 +275,10 @@ class BluetoothService : Service() {
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
             result?.device?.let { device ->
-                Log.d(TAG, "Discovered BLE device: ${device.name ?: device.address}")
+                val address = device.address
+                // Guard: skip if already connected or connection in progress
+                if (connections.containsKey(address)) return@let
+                Log.d(TAG, "Discovered BLE device: ${device.name ?: address}")
                 // On BLE scan result matching Neo's service UUID, trigger connectToDevice
                 serviceScope.launch {
                     connectToDevice(device)
@@ -357,13 +372,6 @@ class BluetoothService : Service() {
         
         val connection = PeerConnection(device, socket, serviceScope)
         connections[address] = connection
-        
-        // Listen for messages from this peer
-        serviceScope.launch {
-            connection.receivedMessages.collect { message ->
-                onMessageReceived?.invoke(address, message)
-            }
-        }
         
         // Monitor connection state
         serviceScope.launch {

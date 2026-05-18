@@ -64,6 +64,10 @@ android {
     }
 }
 
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     // Core Android
     implementation("androidx.core:core-splashscreen:1.0.1")
@@ -79,6 +83,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material")
     implementation("androidx.compose.material:material-icons-extended")
+    implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.navigation:navigation-compose:2.7.5")
     
     // Room Database

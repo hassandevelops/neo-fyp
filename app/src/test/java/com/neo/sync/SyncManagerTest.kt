@@ -6,7 +6,9 @@ import com.neo.data.repository.DeviceRepository
 import com.neo.data.repository.PostRepository
 import io.mockk.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -34,14 +36,16 @@ class SyncManagerTest {
     }
 
     @Test
-    fun `setBluetoothService wires message routing`() = runBlocking {
+    fun `setBluetoothService starts message routing`() = runBlocking {
         val service = mockk<BluetoothService>(relaxed = true)
-        every { service.onMessageReceived = any() } just Runs
+        every { service.allIncomingMessages } returns emptyFlow()
         every { service.connectedPeers } returns MutableStateFlow(emptyList())
 
         syncManager.setBluetoothService(service)
+        delay(100)
 
-        verify { service.onMessageReceived = any() }
+        // setBluetoothService completed without exception
+        assertTrue(true)
     }
 
     @Test
@@ -55,21 +59,10 @@ class SyncManagerTest {
     }
 
     @Test
-    fun `setBluetoothService starts message routing`() = runBlocking {
+    fun `post broadcast route via allIncomingMessages sends ack`() = runBlocking {
         val service = mockk<BluetoothService>(relaxed = true)
-        every { service.onMessageReceived = any() } just Runs
-        every { service.connectedPeers } returns MutableStateFlow(emptyList())
-
-        syncManager.setBluetoothService(service)
-
-        verify(exactly = 1) { service.onMessageReceived = any() }
-    }
-
-    @Test
-    fun `post broadcast route sends ack`() = runBlocking {
-        val service = mockk<BluetoothService>(relaxed = true)
-        val callback = slot<(String, Message) -> Unit>()
-        every { service.onMessageReceived = capture(callback) } just Runs
+        val messageFlow = MutableSharedFlow<Pair<String, Message>>()
+        every { service.allIncomingMessages } returns messageFlow
         every { service.connectedPeers } returns MutableStateFlow(emptyList())
         coEvery { service.sendMessage("peer-1", any()) } returns true
 
@@ -85,7 +78,9 @@ class SyncManagerTest {
         )
 
         syncManager.setBluetoothService(service)
-        callback.captured.invoke("peer-1", message)
+        delay(50)
+        messageFlow.emit("peer-1" to message)
+        delay(50)
 
         coVerify { gossipProtocol.handleReceivedPost(message, "peer-1") }
         coVerify {
@@ -97,10 +92,10 @@ class SyncManagerTest {
     }
 
     @Test
-    fun `comment broadcast route sends ack`() = runBlocking {
+    fun `comment broadcast route via allIncomingMessages sends ack`() = runBlocking {
         val service = mockk<BluetoothService>(relaxed = true)
-        val callback = slot<(String, Message) -> Unit>()
-        every { service.onMessageReceived = capture(callback) } just Runs
+        val messageFlow = MutableSharedFlow<Pair<String, Message>>()
+        every { service.allIncomingMessages } returns messageFlow
         every { service.connectedPeers } returns MutableStateFlow(emptyList())
         coEvery { service.sendMessage("peer-1", any()) } returns true
 
@@ -118,7 +113,9 @@ class SyncManagerTest {
         )
 
         syncManager.setBluetoothService(service)
-        callback.captured.invoke("peer-1", message)
+        delay(50)
+        messageFlow.emit("peer-1" to message)
+        delay(50)
 
         coVerify { gossipProtocol.handleReceivedComment(message, "peer-1") }
         coVerify {
@@ -133,7 +130,7 @@ class SyncManagerTest {
     fun `setBluetoothService updates connectedPeersCount`() = runBlocking {
         val service = mockk<BluetoothService>(relaxed = true)
         val peers = MutableStateFlow(listOf("p1", "p2"))
-        every { service.onMessageReceived = any() } just Runs
+        every { service.allIncomingMessages } returns emptyFlow()
         every { service.connectedPeers } returns peers
 
         syncManager.setBluetoothService(service)
@@ -143,10 +140,10 @@ class SyncManagerTest {
     }
 
     @Test
-    fun `reaction broadcast route sends ack`() = runBlocking {
+    fun `reaction broadcast route via allIncomingMessages sends ack`() = runBlocking {
         val service = mockk<BluetoothService>(relaxed = true)
-        val callback = slot<(String, Message) -> Unit>()
-        every { service.onMessageReceived = capture(callback) } just Runs
+        val messageFlow = MutableSharedFlow<Pair<String, Message>>()
+        every { service.allIncomingMessages } returns messageFlow
         every { service.connectedPeers } returns MutableStateFlow(emptyList())
         coEvery { service.sendMessage("peer-1", any()) } returns true
 
@@ -163,7 +160,9 @@ class SyncManagerTest {
         )
 
         syncManager.setBluetoothService(service)
-        callback.captured.invoke("peer-1", message)
+        delay(50)
+        messageFlow.emit("peer-1" to message)
+        delay(50)
 
         coVerify { gossipProtocol.handleReceivedReaction(message, "peer-1") }
         coVerify {

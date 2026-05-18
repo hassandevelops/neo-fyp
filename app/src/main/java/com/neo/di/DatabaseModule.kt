@@ -7,6 +7,7 @@ import com.neo.data.dao.DeviceDao
 import com.neo.data.dao.NotificationDao
 import com.neo.data.dao.PostDao
 import com.neo.data.dao.ReactionDao
+import com.neo.data.dao.SavedPostDao
 import com.neo.data.db.AppDatabase
 import dagger.Module
 import dagger.Provides
@@ -58,5 +59,10 @@ object DatabaseModule {
     @Provides
     fun provideNotificationDao(database: AppDatabase): NotificationDao {
         return database.notificationDao()
+    }
+
+    @Provides
+    fun provideSavedPostDao(database: AppDatabase): SavedPostDao {
+        return database.savedPostDao()
     }
 }
