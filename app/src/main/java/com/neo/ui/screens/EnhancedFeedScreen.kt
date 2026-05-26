@@ -1,9 +1,11 @@
 package com.neo.ui.screens
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -23,18 +25,25 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neo.data.model.Post
 import com.neo.ui.components.*
 import com.neo.ui.theme.*
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.material3.MaterialTheme
+import com.neo.ui.viewmodel.CreatePostViewModel
 import com.neo.ui.viewmodel.FeedViewModel
 import com.neo.ui.viewmodel.PostDetailViewModel
 import com.neo.ui.viewmodel.PostStats
@@ -60,9 +69,15 @@ fun EnhancedFeedScreen(
     val connectedPeersCount by viewModel.connectedPeersCount.collectAsState()
     val notificationCount by viewModel.notificationCount.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
-    val visiblePosts = pagedPosts.itemSnapshotList.items
-    val postStatsMap by postDetailViewModel.getPostStatsMapFlow(visiblePosts.map { it.id })
-        .collectAsState(initial = emptyMap())
+    val postCreationState by viewModel.postCreationState.collectAsState()
+    val postIds by remember {
+        derivedStateOf {
+            pagedPosts.itemSnapshotList.items.map { it.id }
+        }
+    }
+    val postStatsMap by remember(postIds) {
+        postDetailViewModel.getPostStatsMapFlow(postIds)
+    }.collectAsState(initial = emptyMap())
     val savedPostIds by viewModel.savedPostIds.collectAsState()
     var selectedPostForComments by remember { mutableStateOf<Post?>(null) }
     val refreshLoadState = pagedPosts.loadState.refresh
@@ -86,24 +101,26 @@ fun EnhancedFeedScreen(
     }
 
     val lazyListState = rememberLazyListState()
-    var previousIndex by remember { mutableIntStateOf(0) }
-    var previousScrollOffset by remember { mutableIntStateOf(0) }
-    val isScrollingDown by remember {
-        derivedStateOf {
-            val currentIndex = lazyListState.firstVisibleItemIndex
-            val currentOffset = lazyListState.firstVisibleItemScrollOffset
-            when {
-                currentIndex > previousIndex -> true
-                currentIndex < previousIndex -> false
-                else -> currentOffset > previousScrollOffset
-            }.also {
-                previousIndex = currentIndex
-                previousScrollOffset = currentOffset
+    var isScrollingDown by remember { mutableStateOf(false) }
+    LaunchedEffect(lazyListState) {
+        var prevIndex = lazyListState.firstVisibleItemIndex
+        var prevOffset = lazyListState.firstVisibleItemScrollOffset
+        snapshotFlow { lazyListState.firstVisibleItemIndex to lazyListState.firstVisibleItemScrollOffset }
+            .collect { (currentIndex, currentOffset) ->
+                val goingDown = when {
+                    currentIndex > prevIndex -> true
+                    currentIndex < prevIndex -> false
+                    else -> currentOffset > prevOffset
+                }
+                if (goingDown != isScrollingDown) {
+                    isScrollingDown = goingDown
+                }
+                prevIndex = currentIndex
+                prevOffset = currentOffset
             }
-        }
     }
-    val headerOffsetY by animateDpAsState(
-        targetValue = if (isScrollingDown) -headerHeightDp else 0.dp,
+    val headerTranslationY by animateFloatAsState(
+        targetValue = if (isScrollingDown) -headerHeightPx.toFloat() else 0f,
         animationSpec = tween(durationMillis = 250),
         label = "header_offset"
     )
@@ -152,6 +169,12 @@ fun EnhancedFeedScreen(
                                     connectedPeers = connectedPeersCount,
                                     onClick = onNavigateToBLEStatus
                                 )
+                            }
+
+                            if (postCreationState is CreatePostViewModel.UiState.Loading) {
+                                item {
+                                    BackgroundPostingCard()
+                                }
                             }
 
                             // Posts
@@ -234,7 +257,9 @@ fun EnhancedFeedScreen(
                 .onGloballyPositioned { coords ->
                     headerHeightPx = coords.size.height
                 }
-                .offset(y = headerOffsetY),
+                .graphicsLayer {
+                    translationY = headerTranslationY
+                },
             onProfileClick = onNavigateToProfile,
             onSearchClick = onNavigateToSearch,
             onNotificationsClick = onNavigateToNotifications,
@@ -441,86 +466,143 @@ private fun BLEMeshCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Card(
+    var isPressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.97f else 1f,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMedium),
+        label = "ble_card_scale"
+    )
+
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = SurfaceWhite5
-        )
+            .graphicsLayer(
+                scaleX = scale,
+                scaleY = scale
+            )
+            .liquidGlass(
+                shape = RoundedCornerShape(24.dp),
+                fillColor = GlassWhite16,
+                shadowElevation = if (isPressed) 6.dp else 16.dp,
+                cornerRadius = 72f
+            )
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = {
+                        isPressed = true
+                        tryAwaitRelease()
+                        isPressed = false
+                    },
+                    onTap = { onClick() }
+                )
+            }
+            .padding(20.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.1f),
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
-                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.1f)
-                        )
-                    )
-                )
-                .border(
-                    width = 1.dp,
-                    color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f),
-                    shape = RoundedCornerShape(24.dp)
-                )
-                .padding(24.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                // Icon in glass container
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .shadow(
+                            elevation = 8.dp,
+                            shape = RoundedCornerShape(14.dp),
+                            ambientColor = NeoLimeGlow10,
+                            spotColor = NeoLimeGlow10
+                        )
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(GlassWhite20)
+                        .drawBehind {
+                            // Specular highlight on icon container
+                            drawRoundRect(
+                                brush = Brush.verticalGradient(
+                                    colorStops = arrayOf(
+                                        0.0f to GlassReflectionEdge,
+                                        0.1f to Color.Transparent,
+                                        1.0f to Color.Transparent
+                                    )
+                                ),
+                                cornerRadius = CornerRadius(42f, 42f)
+                            )
+                        },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f))
-                            .border(
-                                1.dp,
-                                MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f),
-                                RoundedCornerShape(12.dp)
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Radio,
-                            contentDescription = "BLE Mesh",
-                            tint = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-
-                    Column {
-                        Text(
-                            text = "BLE Mesh Network",
-                            color = TextWhite,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = "$connectedPeers peers connected",
-                            color = TextWhite60,
-                            fontSize = 14.sp
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Radio,
+                        contentDescription = "BLE Mesh",
+                        tint = NeoLime,
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
 
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "View",
-                    tint = MaterialTheme.colorScheme.secondary,
-                    modifier = Modifier.size(20.dp)
+                Column {
+                    Text(
+                        text = "BLE Mesh Network",
+                        color = TextWhite,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "$connectedPeers peers connected",
+                        color = TextWhite60,
+                        fontSize = 14.sp
+                    )
+                }
+            }
+
+            // Arrow icon — unified NeoLime
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "View",
+                tint = NeoLime,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun BackgroundPostingCard(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(GlassWhite8)
+            .border(BorderStroke(0.5.dp, GlassBorderMid), RoundedCornerShape(16.dp))
+            .padding(16.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            CircularProgressIndicator(
+                color = NeoLime,
+                modifier = Modifier.size(24.dp),
+                strokeWidth = 2.dp
+            )
+            Column {
+                Text(
+                    text = "Publishing to mesh network...",
+                    color = TextWhite,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Syncing encrypted post with nearby peers",
+                    color = TextWhite60,
+                    fontSize = 12.sp
                 )
             }
         }
     }
 }
+

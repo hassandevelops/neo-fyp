@@ -72,9 +72,24 @@ fun EnhancedNeoNavigation(
     val currentRoute = navBackStackEntry?.destination?.route ?: startDestination
 
     // Collect state from ViewModel
-    val posts by viewModel.posts.collectAsState()
     val connectedPeersCount by viewModel.connectedPeersCount.collectAsState()
     val connectedPeers by viewModel.connectedPeers.collectAsState()
+    val currentImageUri by viewModel.profileImageUri.collectAsState()
+
+    val postCreationState by viewModel.postCreationState.collectAsState()
+    LaunchedEffect(postCreationState) {
+        when (val state = postCreationState) {
+            is CreatePostViewModel.UiState.Success -> {
+                snackbarHostState.showSnackbar(state.message)
+                viewModel.resetPostCreationState()
+            }
+            is CreatePostViewModel.UiState.Error -> {
+                snackbarHostState.showSnackbar(state.message)
+                viewModel.resetPostCreationState()
+            }
+            else -> {}
+        }
+    }
     
     Scaffold(
         containerColor = Color.Transparent,
@@ -157,17 +172,14 @@ fun EnhancedNeoNavigation(
                 fadeOut(animationSpec = tween(250))
             }
         ) {
-            val createPostViewModel: CreatePostViewModel = hiltViewModel()
             EnhancedCreatePostScreen(
-                viewModel = createPostViewModel,
-                snackbarHostState = snackbarHostState,
                 onPostClick = { content, authorName, imageUri ->
-                    createPostViewModel.createPost(content, authorName, imageUri)
+                    viewModel.createPost(content, authorName, imageUri) {
+                        navController.popBackStack()
+                    }
                 },
                 onDismiss = {
-                    navController.navigate("feed") {
-                        popUpTo("feed") { inclusive = true }
-                    }
+                    navController.popBackStack()
                 }
             )
         }
@@ -200,12 +212,14 @@ fun EnhancedNeoNavigation(
             val profileViewModel: ProfileViewModel = hiltViewModel()
             val currentName by profileViewModel.profileName.collectAsState()
             val currentBio by profileViewModel.profileBio.collectAsState()
+            val currentProfilePhoto by profileViewModel.profileImageUri.collectAsState()
 
             EditProfileScreen(
                 currentName = currentName,
                 currentBio = currentBio,
-                onSave = { name, bio ->
-                    profileViewModel.updateProfile(name, bio)
+                currentImageUri = currentProfilePhoto,
+                onSave = { name, bio, imageUri ->
+                    profileViewModel.updateProfile(name, bio, imageUri)
                     navController.popBackStack()
                 },
                 onCancel = { navController.popBackStack() }
@@ -220,8 +234,9 @@ fun EnhancedNeoNavigation(
                 popEnterTransition = { fadeIn(animationSpec = tween(0)) },
                 popExitTransition = { fadeOut(animationSpec = tween(0)) }
             ) {
+            val searchPosts by viewModel.getAllPosts().collectAsState(initial = emptyList())
             SearchScreen(
-                posts = posts,
+                posts = searchPosts,
                 onPostClick = { post ->
                     navController.navigate("post_detail/${post.id}")
                 },
@@ -342,6 +357,8 @@ fun EnhancedNeoNavigation(
                     post = post!!,
                     viewModel = postDetailViewModel,
                     currentUserName = userPreferences.userName,
+                    currentUserId = viewModel.currentUserId,
+                    profileImageUri = currentImageUri,
                     onBack = { navController.popBackStack() }
                 )
                 postDetailViewModel.loadAttempted -> Box(

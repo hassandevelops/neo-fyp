@@ -20,11 +20,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neo.R
 import com.neo.ui.theme.*
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import coil.compose.rememberAsyncImagePainter
+import androidx.compose.ui.layout.ContentScale
 
 /**
- * App header — profile avatar on left, "Neo" wordmark, bell on right.
- * Pure black background matching the design samples.
+ * App header — solid dark surface, integrated naturally into the app layout.
+ * No glass effect, no floating appearance.
  */
 @Composable
 fun EnhancedHeader(
@@ -32,7 +35,8 @@ fun EnhancedHeader(
     onSearchClick: () -> Unit,
     onNotificationsClick: () -> Unit,
     onSettingsClick: () -> Unit,
-    notificationCount: Int = 0,
+    notificationCount: Int,
+    profileImageUri: String? = null,
     modifier: Modifier = Modifier
 ) {
     val badgeAlpha by if (notificationCount > 0) {
@@ -48,7 +52,7 @@ fun EnhancedHeader(
 
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = NeoBlack,
+        color = NeoBlack,          // Solid — matches app background
         tonalElevation = 0.dp
     ) {
         Row(
@@ -74,12 +78,21 @@ fun EnhancedHeader(
                         .clickable(onClick = onProfileClick),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Person,
-                        contentDescription = "Profile",
-                        tint = TextWhite60,
-                        modifier = Modifier.size(20.dp)
-                    )
+                    if (profileImageUri != null) {
+                        Image(
+                            painter = rememberAsyncImagePainter(model = profileImageUri),
+                            contentDescription = "Profile",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Person,
+                            contentDescription = "Profile",
+                            tint = TextWhite60,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
 
                 Image(

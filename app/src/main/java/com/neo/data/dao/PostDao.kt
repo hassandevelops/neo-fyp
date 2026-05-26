@@ -120,4 +120,21 @@ interface PostDao {
      */
     @Update
     suspend fun update(post: Post)
+
+    @Query("""
+        SELECT p.id AS postId,
+            (SELECT COUNT(*) FROM comments c WHERE c.postId = p.id) AS commentCount,
+            (SELECT COUNT(*) FROM reactions r WHERE r.postId = p.id AND r.type = 'LIKE') AS likeCount,
+            EXISTS(SELECT 1 FROM reactions r2 WHERE r2.postId = p.id AND r2.userId = :userId AND r2.type = 'LIKE') AS hasLiked
+        FROM posts p
+        WHERE p.id IN (:postIds)
+    """)
+    fun getBatchStats(postIds: List<String>, userId: String): Flow<List<PostStatsEntry>>
 }
+
+data class PostStatsEntry(
+    val postId: String,
+    val commentCount: Int,
+    val likeCount: Int,
+    val hasLiked: Boolean
+)

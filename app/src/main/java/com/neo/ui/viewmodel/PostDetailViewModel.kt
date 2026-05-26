@@ -23,8 +23,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
@@ -77,17 +77,17 @@ class PostDetailViewModel @Inject constructor(
     }
 
     fun getPostStatsMapFlow(postIds: List<String>): Flow<Map<String, PostStats>> {
-        if (postIds.isEmpty()) return kotlinx.coroutines.flow.flowOf(emptyMap())
-        val flows = postIds.map { postId ->
-            combine(
-                getCommentCountForPost(postId),
-                getLikeCountForPost(postId),
-                hasUserLikedPostFlow(postId)
-            ) { commentCount, likeCount, hasLiked ->
-                postId to PostStats(commentCount, likeCount, hasLiked)
+        if (postIds.isEmpty()) return flowOf(emptyMap())
+        return postRepository.getBatchStats(postIds, cryptoManager.getDeviceId())
+            .map { entries ->
+                entries.associate { entry ->
+                    entry.postId to PostStats(
+                        commentCount = entry.commentCount,
+                        likeCount = entry.likeCount,
+                        hasLiked = entry.hasLiked
+                    )
+                }
             }
-        }
-        return combine(flows) { pairs -> pairs.toMap() }
     }
 
     fun getTopLevelCommentsForPost(postId: String) =
@@ -95,16 +95,6 @@ class PostDetailViewModel @Inject constructor(
 
     fun getRepliesForComment(commentId: String) =
         commentRepository.getRepliesForComment(commentId)
-
-    fun getCommentCountForPost(postId: String) =
-        commentRepository.getCommentCountForPostFlow(postId)
-
-    fun getLikeCountForPost(postId: String) =
-        reactionRepository.getReactionCountForPost(postId, ReactionType.LIKE)
-
-    fun hasUserLikedPost(postId: String): Boolean {
-        return false // Must be checked via Flow
-    }
 
     fun hasUserLikedPostFlow(postId: String) =
         reactionRepository.hasUserReactedFlow(postId, cryptoManager.getDeviceId(), ReactionType.LIKE)

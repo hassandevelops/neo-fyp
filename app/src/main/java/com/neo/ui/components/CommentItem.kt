@@ -1,6 +1,10 @@
 package com.neo.ui.components
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Reply
 import androidx.compose.material3.*
@@ -10,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.neo.data.model.Comment
+import com.neo.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -32,8 +37,10 @@ fun CommentItem(
             .fillMaxWidth()
             .padding(start = indentDp, top = 8.dp, end = 8.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        )
+            containerColor = NeoGray900
+        ),
+        border = BorderStroke(0.5.dp, GlassBorderSubtle),
+        shape = RoundedCornerShape(16.dp)
     ) {
         Column(
             modifier = Modifier
@@ -75,17 +82,22 @@ fun CommentItem(
                 
                 TextButton(
                     onClick = { onReplyClick(comment) },
-                    modifier = Modifier.height(40.dp)
+                    modifier = Modifier
+                        .height(32.dp)
+                        .background(NeoGray800, RoundedCornerShape(16.dp)),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Reply,
                         contentDescription = "Reply",
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(14.dp),
+                        tint = NeoLime
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         text = "Reply",
-                        style = MaterialTheme.typography.labelSmall
+                        style = MaterialTheme.typography.labelSmall,
+                        color = NeoLime
                     )
                 }
             }

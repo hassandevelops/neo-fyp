@@ -1,6 +1,5 @@
 package com.neo.ui.viewmodel
 
-import com.neo.data.model.Post
 import com.neo.data.repository.NotificationRepository
 import com.neo.data.repository.SavedPostRepository
 import com.neo.domain.port.ISyncPort
@@ -45,41 +44,8 @@ class FeedViewModelTest {
     }
 
     @Test
-    fun `posts are collected from use case`() = runTest(testDispatcher) {
-        val posts = listOf(
-            Post(id = "1", authorId = "a1", authorName = "Alice", content = "Hello", timestamp = 1000L, signature = "sig1", publicKey = "pk1", firstSeenTimestamp = 1000L)
-        )
-        every { getFeedUseCase.execute() } returns flowOf(posts)
-        every { getFeedUseCase.executePaged() } returns flowOf()
-        every { syncPort.connectedPeersCount } returns MutableStateFlow(0)
-        every { notificationRepository.getUnreadCount() } returns MutableStateFlow(0)
-
-        viewModel = FeedViewModel(mockk(relaxed = true), getFeedUseCase, syncPort, notificationRepository, savedPostRepository)
-        backgroundScope.launch(testDispatcher) { viewModel.posts.collect { } }
-        advanceUntilIdle()
-
-        assertEquals(1, viewModel.posts.value.size)
-        assertEquals("Hello", viewModel.posts.value[0].content)
-    }
-
-    @Test
-    fun `empty feed emits empty list`() = runTest(testDispatcher) {
-        every { getFeedUseCase.execute() } returns flowOf(emptyList())
-        every { getFeedUseCase.executePaged() } returns flowOf()
-        every { syncPort.connectedPeersCount } returns MutableStateFlow(0)
-        every { notificationRepository.getUnreadCount() } returns MutableStateFlow(0)
-
-        viewModel = FeedViewModel(mockk(relaxed = true), getFeedUseCase, syncPort, notificationRepository, savedPostRepository)
-        backgroundScope.launch(testDispatcher) { viewModel.posts.collect { } }
-        advanceUntilIdle()
-
-        assertTrue(viewModel.posts.value.isEmpty())
-    }
-
-    @Test
     fun `connected peers count reflects sync port`() = runTest(testDispatcher) {
         val peersCount = MutableStateFlow(5)
-        every { getFeedUseCase.execute() } returns flowOf(emptyList())
         every { getFeedUseCase.executePaged() } returns flowOf()
         every { syncPort.connectedPeersCount } returns peersCount
         every { notificationRepository.getUnreadCount() } returns MutableStateFlow(0)
@@ -93,7 +59,6 @@ class FeedViewModelTest {
 
     @Test
     fun `paged posts delegates to use case`() = runTest(testDispatcher) {
-        every { getFeedUseCase.execute() } returns flowOf(emptyList())
         every { getFeedUseCase.executePaged() } returns flowOf()
         every { syncPort.connectedPeersCount } returns MutableStateFlow(0)
         every { notificationRepository.getUnreadCount() } returns MutableStateFlow(0)
@@ -107,7 +72,6 @@ class FeedViewModelTest {
 
     @Test
     fun `isRefreshing starts false`() = runTest(testDispatcher) {
-        every { getFeedUseCase.execute() } returns flowOf(emptyList())
         every { getFeedUseCase.executePaged() } returns flowOf()
         every { syncPort.connectedPeersCount } returns MutableStateFlow(0)
         every { notificationRepository.getUnreadCount() } returns MutableStateFlow(0)
@@ -120,7 +84,6 @@ class FeedViewModelTest {
 
     @Test
     fun `refresh sets and clears isRefreshing`() = runTest(testDispatcher) {
-        every { getFeedUseCase.execute() } returns flowOf(emptyList())
         every { getFeedUseCase.executePaged() } returns flowOf()
         every { syncPort.connectedPeersCount } returns MutableStateFlow(0)
         every { notificationRepository.getUnreadCount() } returns MutableStateFlow(0)
@@ -139,7 +102,6 @@ class FeedViewModelTest {
 
     @Test
     fun `notificationCount reflects repository`() = runTest(testDispatcher) {
-        every { getFeedUseCase.execute() } returns flowOf(emptyList())
         every { getFeedUseCase.executePaged() } returns flowOf()
         every { syncPort.connectedPeersCount } returns MutableStateFlow(0)
         every { notificationRepository.getUnreadCount() } returns MutableStateFlow(5)
@@ -149,25 +111,5 @@ class FeedViewModelTest {
         advanceUntilIdle()
 
         assertEquals(5, viewModel.notificationCount.value)
-    }
-
-    @Test
-    fun `uiState transitions to Success when posts arrive`() = runTest(testDispatcher) {
-        val posts = MutableStateFlow(
-            listOf(
-                Post(id = "1", authorId = "a1", authorName = "A", content = "X", timestamp = 1L, signature = "s", publicKey = "p", firstSeenTimestamp = 1L)
-            )
-        )
-        every { getFeedUseCase.execute() } returns posts
-        every { getFeedUseCase.executePaged() } returns flowOf()
-        every { syncPort.connectedPeersCount } returns MutableStateFlow(0)
-        every { notificationRepository.getUnreadCount() } returns MutableStateFlow(0)
-
-        viewModel = FeedViewModel(mockk(relaxed = true), getFeedUseCase, syncPort, notificationRepository, savedPostRepository)
-        backgroundScope.launch(testDispatcher) { viewModel.posts.collect { } }
-        advanceUntilIdle()
-
-        assertTrue(viewModel.uiState.value is FeedViewModel.UiState.Success)
-        assertFalse((viewModel.uiState.value as FeedViewModel.UiState.Success).isEmpty)
     }
 }

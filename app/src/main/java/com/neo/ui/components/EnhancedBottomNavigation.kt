@@ -15,13 +15,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.neo.ui.theme.*
 
 /**
- * Bottom navigation bar.
- * Layout from design samples:
- *   Home | Search | [LIME FAB] | Bell | Profile
+ * Bottom navigation bar — solid dark surface.
+ * Layout: Home | Search | [LIME FAB] | Bell | Profile
  * Active icon: NeoLime  |  Inactive: white/40
  */
 @Composable
@@ -31,70 +31,77 @@ fun EnhancedBottomNavigation(
     onFabClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val fabGlow = 0.6f
-
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = NeoBlack,
+        color = NeoBlack,          // Solid — matches app background
         tonalElevation = 0.dp
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceAround,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Home
-            NavIcon(
-                icon = if (selectedRoute == "feed") Icons.Filled.Home else Icons.Outlined.Home,
-                selected = selectedRoute == "feed",
-                onClick = { onNavigate("feed") }
-            )
-
-            // Search
-            NavIcon(
-                icon = if (selectedRoute == "search") Icons.Filled.Search else Icons.Outlined.Search,
-                selected = selectedRoute == "search",
-                onClick = { onNavigate("search") }
-            )
-
-            // ── Center NeoLime FAB ───────────────────────────────────────
+        // Subtle top divider for hierarchy separation
+        Column {
             Box(
                 modifier = Modifier
-                    .size(56.dp)
-                    .shadow(
-                        elevation = 18.dp,
-                        shape = CircleShape,
-                        ambientColor = NeoLime.copy(alpha = fabGlow),
-                        spotColor = NeoLime.copy(alpha = fabGlow)
-                    )
-                    .clip(CircleShape)
-                    .background(NeoLime)
-                    .clickable(onClick = onFabClick),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .height(0.5.dp)
+                    .background(GlassBorderSubtle)
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceAround,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Create post",
-                    tint = NeoBlack,
-                    modifier = Modifier.size(28.dp)
+                // Home
+                NavIcon(
+                    icon = if (selectedRoute == "feed") Icons.Filled.Home else Icons.Outlined.Home,
+                    selected = selectedRoute == "feed",
+                    onClick = { onNavigate("feed") }
+                )
+
+                // Search
+                NavIcon(
+                    icon = if (selectedRoute == "search") Icons.Filled.Search else Icons.Outlined.Search,
+                    selected = selectedRoute == "search",
+                    onClick = { onNavigate("search") }
+                )
+
+                // ── Center NeoLime FAB ───────────────────────────────────────
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .shadow(
+                            elevation = 12.dp,
+                            shape = CircleShape,
+                            ambientColor = NeoLimeGlow20,
+                            spotColor = NeoLimeGlow20
+                        )
+                        .clip(CircleShape)
+                        .background(NeoLime)
+                        .clickable(onClick = onFabClick),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Create post",
+                        tint = NeoBlack,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+
+                // Bell
+                NavIcon(
+                    icon = if (selectedRoute == "notifications") Icons.Filled.Notifications else Icons.Outlined.Notifications,
+                    selected = selectedRoute == "notifications",
+                    onClick = { onNavigate("notifications") }
+                )
+
+                // Profile
+                NavIcon(
+                    icon = if (selectedRoute == "profile") Icons.Filled.Person else Icons.Outlined.Person,
+                    selected = selectedRoute == "profile",
+                    onClick = { onNavigate("profile") }
                 )
             }
-
-            // Bell
-            NavIcon(
-                icon = if (selectedRoute == "notifications") Icons.Filled.Notifications else Icons.Outlined.Notifications,
-                selected = selectedRoute == "notifications",
-                onClick = { onNavigate("notifications") }
-            )
-
-            // Profile
-            NavIcon(
-                icon = if (selectedRoute == "profile") Icons.Filled.Person else Icons.Outlined.Person,
-                selected = selectedRoute == "profile",
-                onClick = { onNavigate("profile") }
-            )
         }
     }
 }

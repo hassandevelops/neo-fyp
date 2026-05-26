@@ -94,7 +94,7 @@ fun BLEMeshStatusScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Image(
-                        painter = painterResource(id = R.drawable.splash),
+                        painter = painterResource(id = R.drawable.splash_no_bg),
                         contentDescription = "Neo logo",
                         modifier = Modifier.size(76.dp)
                     )

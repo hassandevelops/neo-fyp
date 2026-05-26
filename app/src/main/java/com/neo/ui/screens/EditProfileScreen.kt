@@ -1,6 +1,11 @@
 package com.neo.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -12,34 +17,44 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.rememberAsyncImagePainter
 import com.neo.ui.components.GradientBackground
 import com.neo.ui.theme.*
-import androidx.compose.material3.MaterialTheme
 
 /**
- * Edit Profile Screen for updating user information
+ * Edit Profile Screen — name, bio, and profile picture editing.
  */
 @Composable
 fun EditProfileScreen(
     currentName: String = "Neo User",
     currentBio: String = "Decentralized social media enthusiast",
-    onSave: (name: String, bio: String) -> Unit,
+    currentImageUri: String? = null,
+    onSave: (name: String, bio: String, imageUri: String?) -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var name by remember { mutableStateOf(currentName) }
     var bio by remember { mutableStateOf(currentBio) }
     var nameError by remember { mutableStateOf<String?>(null) }
-    
+    var selectedImageUri by remember { mutableStateOf<Uri?>(currentImageUri?.let { Uri.parse(it) }) }
+    var isSaving by remember { mutableStateOf(false) }
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) selectedImageUri = uri
+    }
+
     GradientBackground(modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Header
+            // Header — solid dark, integrated
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = NeoBlack.copy(alpha = 0.5f)
+                color = NeoBlack
             ) {
                 Row(
                     modifier = Modifier
@@ -56,34 +71,44 @@ fun EditProfileScreen(
                             tint = TextWhite
                         )
                     }
-                    
+
                     Text(
                         text = "Edit Profile",
                         color = TextWhite,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.SemiBold
                     )
-                    
+
                     TextButton(
                         onClick = {
                             if (name.isBlank()) {
                                 nameError = "Name cannot be empty"
                             } else {
                                 nameError = null
-                                onSave(name.trim(), bio.trim())
+                                isSaving = true
+                                onSave(name.trim(), bio.trim(), selectedImageUri?.toString())
                             }
-                        }
+                        },
+                        enabled = !isSaving
                     ) {
-                        Text(
-                            text = "Save",
-                            color = NeoLime,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        if (isSaving) {
+                            CircularProgressIndicator(
+                                color = NeoLime,
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text(
+                                text = "Save",
+                                color = NeoLime,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
             }
-            
+
             // Content
             Column(
                 modifier = Modifier
@@ -91,36 +116,70 @@ fun EditProfileScreen(
                     .padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
-                // Profile Picture Placeholder
+                // Profile Picture — clickable with camera overlay
                 Box(
                     modifier = Modifier
                         .size(120.dp)
                         .align(Alignment.CenterHorizontally)
                         .clip(CircleShape)
-                        .background(
-                            brush = Brush.linearGradient(
-                                colors = listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.error)
-                            )
-                        ),
+                        .clickable { imagePickerLauncher.launch("image/*") },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Person,
-                        contentDescription = "Profile Picture",
-                        tint = TextWhite,
-                        modifier = Modifier.size(60.dp)
-                    )
+                    if (selectedImageUri != null) {
+                        // Show selected image
+                        Image(
+                            painter = rememberAsyncImagePainter(selectedImageUri),
+                            contentDescription = "Profile Picture",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        // Default avatar
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(NeoGray800),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Person,
+                                contentDescription = "Profile Picture",
+                                tint = TextWhite60,
+                                modifier = Modifier.size(60.dp)
+                            )
+                        }
+                    }
+
+                    // Camera overlay badge
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(NeoLime),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CameraAlt,
+                            contentDescription = "Change photo",
+                            tint = NeoBlack,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
-                
+
+                // "Change Photo" text — also clickable
                 Text(
                     text = "Change Photo",
-                    color = MaterialTheme.colorScheme.secondary,
+                    color = NeoLime,
                     fontSize = 14.sp,
-                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .clickable { imagePickerLauncher.launch("image/*") }
                 )
-                
+
                 Spacer(modifier = Modifier.height(8.dp))
-                
+
                 // Name Field
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
@@ -129,17 +188,17 @@ fun EditProfileScreen(
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium
                     )
-                    
+
                     OutlinedTextField(
                         value = name,
-                        onValueChange = { 
+                        onValueChange = {
                             name = it
                             nameError = null
                         },
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = { Text("Enter your name", color = TextWhite40) },
                         isError = nameError != null,
-                        supportingText = nameError?.let { 
+                        supportingText = nameError?.let {
                             { Text(it, color = MaterialTheme.colorScheme.error) }
                         },
                         colors = OutlinedTextFieldDefaults.colors(
@@ -154,7 +213,7 @@ fun EditProfileScreen(
                         singleLine = true
                     )
                 }
-                
+
                 // Bio Field
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
@@ -163,7 +222,7 @@ fun EditProfileScreen(
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium
                     )
-                    
+
                     OutlinedTextField(
                         value = bio,
                         onValueChange = { bio = it },
@@ -182,9 +241,9 @@ fun EditProfileScreen(
                         maxLines = 5
                     )
                 }
-                
+
                 Spacer(modifier = Modifier.weight(1f))
-                
+
                 // Cancel Button
                 OutlinedButton(
                     onClick = onCancel,

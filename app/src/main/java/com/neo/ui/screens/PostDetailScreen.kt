@@ -39,6 +39,8 @@ fun PostDetailScreen(
     post: Post,
     viewModel: PostDetailViewModel,
     currentUserName: String,
+    currentUserId: String,
+    profileImageUri: String?,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -147,12 +149,22 @@ fun PostDetailScreen(
                                         .background(SurfaceWhite10),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Person,
-                                        contentDescription = null,
-                                        tint = TextWhite60,
-                                        modifier = Modifier.size(24.dp)
-                                    )
+                                    val authorImageUri = if (post.authorId == currentUserId) profileImageUri else null
+                                    if (authorImageUri != null) {
+                                        Image(
+                                            painter = rememberAsyncImagePainter(model = authorImageUri),
+                                            contentDescription = "Profile",
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.Person,
+                                            contentDescription = null,
+                                            tint = TextWhite60,
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
                                 }
                                 
                                 Column {

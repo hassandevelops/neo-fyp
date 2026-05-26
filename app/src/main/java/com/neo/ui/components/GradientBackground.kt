@@ -8,6 +8,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 
+/**
+ * App background — clean dark charcoal surface.
+ * No colored blobs or tints. Just a clean, premium dark base.
+ */
 @Composable
 fun GradientBackground(
     modifier: Modifier = Modifier,

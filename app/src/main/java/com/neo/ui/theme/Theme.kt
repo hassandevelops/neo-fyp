@@ -15,19 +15,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-// Dark scheme: NeoLime primary, NeoGreen secondary, NeoOrange tertiary
+// Dark scheme: Premium charcoal base with unified NeoLime accent
 private val DarkColorScheme = darkColorScheme(
     primary          = NeoLime,
-    onPrimary        = NeoBlack,          // dark text on lime
-    secondary        = NeoGreen,
+    onPrimary        = NeoBlack,
+    secondary        = NeoLime,            // Unified — no more NeoGreen for UI elements
     onSecondary      = NeoBlack,
-    tertiary         = NeoOrange,
+    tertiary         = NeoTeal,
     onTertiary       = TextWhite,
-    background       = NeoBlack,
+    background       = NeoBlack,           // 0xFF0C0C0E — dark charcoal
     onBackground     = TextWhite,
-    surface          = NeoGray900,
+    surface          = NeoGray900,         // 0xFF1C1C1F — warm charcoal
     onSurface        = TextWhite,
-    surfaceVariant   = NeoGray800,
+    surfaceVariant   = NeoGray800,         // 0xFF252528
     onSurfaceVariant = TextWhite60,
     error            = NeoRed,
     onError          = TextWhite

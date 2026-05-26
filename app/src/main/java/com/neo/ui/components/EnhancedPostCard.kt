@@ -49,6 +49,7 @@ fun EnhancedPostCard(
     likeCount: Int = 0,
     commentCount: Int = 0,
     isLive: Boolean = false,
+    authorImageUri: String? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -176,12 +177,21 @@ fun EnhancedPostCard(
                             .background(NeoGray800),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Person,
-                            contentDescription = null,
-                            tint = TextWhite60,
-                            modifier = Modifier.size(22.dp)
-                        )
+                        if (authorImageUri != null) {
+                            Image(
+                                painter = rememberAsyncImagePainter(model = authorImageUri),
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Person,
+                                contentDescription = null,
+                                tint = TextWhite60,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
                     Column {
                         Text(

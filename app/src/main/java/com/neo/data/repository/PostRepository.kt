@@ -4,6 +4,7 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import com.neo.data.dao.PostDao
+import com.neo.data.dao.PostStatsEntry
 import com.neo.data.model.Post
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
@@ -126,6 +127,10 @@ class PostRepository @Inject constructor(
         return postDao.getPostCount()
     }
     
+    fun getBatchStats(postIds: List<String>, userId: String): Flow<List<PostStatsEntry>> {
+        return postDao.getBatchStats(postIds, userId)
+    }
+
     /**
      * Update an existing post.
      */

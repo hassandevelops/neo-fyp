@@ -1,5 +1,10 @@
 package com.neo.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -20,7 +25,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -33,7 +42,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
 import com.neo.R
 import com.neo.data.model.Post
-import com.neo.ui.components.GradientBackground
+import com.neo.ui.components.*
 import com.neo.ui.theme.*
 import com.neo.ui.viewmodel.ProfileViewModel
 
@@ -49,6 +58,7 @@ fun ProfileScreen(
 ) {
     val profileName by viewModel.profileName.collectAsState()
     val profileBio by viewModel.profileBio.collectAsState()
+    val profileImageUri by viewModel.profileImageUri.collectAsState()
     val handle by viewModel.handle.collectAsState()
     val postCount by viewModel.postCount.collectAsState()
     val nodeCount by viewModel.connectedPeersCount.collectAsState()
@@ -56,6 +66,8 @@ fun ProfileScreen(
     val savedPosts by viewModel.savedPosts.collectAsState()
 
     var selectedTab by remember { mutableIntStateOf(0) }
+    var showMenu by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     val scrollStates = remember {
         mutableStateListOf(
@@ -105,87 +117,141 @@ fun ProfileScreen(
                             fontSize = 18.sp,
                             fontWeight = FontWeight.SemiBold
                         )
-                        IconButton(onClick = { /* More options */ }) {
-                            Icon(
-                                imageVector = Icons.Default.MoreVert,
-                                contentDescription = "More",
-                                tint = TextWhite
-                            )
+                        Box {
+                            IconButton(onClick = { showMenu = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.MoreVert,
+                                    contentDescription = "More",
+                                    tint = TextWhite
+                                )
+                            }
+                            MaterialTheme(
+                                colorScheme = MaterialTheme.colorScheme.copy(
+                                    surface = NeoDarkGray.copy(alpha = 0.85f)
+                                )
+                            ) {
+                                DropdownMenu(
+                                    expanded = showMenu,
+                                    onDismissRequest = { showMenu = false },
+                                    modifier = Modifier
+                                        .border(BorderStroke(0.5.dp, GlassBorderMid), RoundedCornerShape(12.dp))
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Edit Profile", color = TextWhite) },
+                                        onClick = {
+                                            showMenu = false
+                                            onEditProfile()
+                                        },
+                                        leadingIcon = {
+                                            Icon(Icons.Default.Edit, null, tint = TextWhite60)
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Share Profile", color = TextWhite) },
+                                        onClick = {
+                                            showMenu = false
+                                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(Intent.EXTRA_TEXT, "Check out $profileName on Neo! ${handle}")
+                                            }
+                                            context.startActivity(Intent.createChooser(shareIntent, "Share profile"))
+                                        },
+                                        leadingIcon = {
+                                            Icon(Icons.Default.Share, null, tint = TextWhite60)
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Copy Handle", color = TextWhite) },
+                                        onClick = {
+                                            showMenu = false
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                            clipboard.setPrimaryClip(ClipData.newPlainText("handle", handle))
+                                            Toast.makeText(context, "Handle copied", Toast.LENGTH_SHORT).show()
+                                        },
+                                        leadingIcon = {
+                                            Icon(Icons.Default.ContentCopy, null, tint = TextWhite60)
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
 
-                    // Profile card
-                    Card(
+                    // Profile card — premium liquid glass panel
+                    LiquidGlassSurface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(24.dp),
-                        colors = CardDefaults.cardColors(containerColor = SurfaceWhite5)
+                        fillColor = GlassWhite16,
+                        shadowElevation = 20.dp,
+                        cornerRadius = 72f,
+                        accentGlow = Color.Transparent  // No green tint — pure glass
                     ) {
-                        Box(
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(
-                                    brush = Brush.linearGradient(
-                                        colors = listOf(
-                                            NeoLime.copy(alpha = 0.15f),
-                                            MaterialTheme.colorScheme.tertiary.copy(alpha = 0.1f)
-                                        )
-                                    )
-                                )
-                                .border(
-                                    1.dp,
-                                    NeoLime.copy(alpha = 0.2f),
-                                    RoundedCornerShape(24.dp)
-                                )
                                 .padding(24.dp)
                         ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.fillMaxWidth()
+                            Box(
+                                modifier = Modifier
+                                    .size(100.dp)
+                                    .shadow(
+                                        elevation = 12.dp,
+                                        shape = CircleShape,
+                                        ambientColor = NeoLimeGlow20,
+                                        spotColor = NeoLimeGlow20
+                                    )
+                                    .clip(CircleShape)
+                                    .border(2.5.dp, NeoLime, CircleShape)
+                                    .padding(3.dp)
+                                    .clip(CircleShape)
+                                    .background(NeoGray800, CircleShape),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(100.dp)
-                                        .clip(CircleShape)
-                                        .border(3.dp, NeoLime, CircleShape)
-                                        .padding(3.dp)
-                                        .clip(CircleShape)
-                                        .background(NeoGray800, CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
+                                if (profileImageUri != null) {
+                                    Image(
+                                        painter = rememberAsyncImagePainter(model = profileImageUri),
+                                        contentDescription = "Profile",
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                } else {
                                     Image(
                                         painter = painterResource(id = R.drawable.splash),
                                         contentDescription = "Profile",
                                         modifier = Modifier.size(60.dp)
                                     )
                                 }
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(
-                                    text = profileName,
-                                    color = TextWhite,
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = handle,
-                                    color = NeoLime,
-                                    fontSize = 14.sp
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = profileBio,
-                                    color = TextWhite60,
-                                    fontSize = 14.sp,
-                                    modifier = Modifier.padding(horizontal = 16.dp)
-                                )
                             }
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = profileName,
+                                color = TextWhite,
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = handle,
+                                color = NeoLime,
+                                fontSize = 14.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = profileBio,
+                                color = TextWhite60,
+                                fontSize = 14.sp,
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
                         }
                     }
 
-                    // Stats row
-                    Card(
+                    // Stats row — liquid glass
+                    LiquidGlassCard(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(18.dp),
-                        colors = CardDefaults.cardColors(containerColor = NeoGray900)
+                        fillColor = GlassWhite12,
+                        shadowElevation = 8.dp,
+                        cornerRadius = 54f
                     ) {
                         Row(
                             modifier = Modifier
@@ -195,9 +261,9 @@ fun ProfileScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             StatItem(label = "PULSES", value = postCount.toString())
-                            Box(modifier = Modifier.width(1.dp).height(32.dp).background(BorderWhite20))
+                            Box(modifier = Modifier.width(1.dp).height(32.dp).background(GlassBorderMid))
                             StatItem(label = "NODES", value = nodeCount.toString())
-                            Box(modifier = Modifier.width(1.dp).height(32.dp).background(BorderWhite20))
+                            Box(modifier = Modifier.width(1.dp).height(32.dp).background(GlassBorderMid))
                             StatItem(label = "FOLLOWERS", value = "0")
                         }
                     }
@@ -205,7 +271,14 @@ fun ProfileScreen(
                     // Establish Link button
                     Button(
                         onClick = onEditProfile,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .shadow(
+                                elevation = 12.dp,
+                                shape = RoundedCornerShape(50.dp),
+                                ambientColor = NeoLimeGlow20,
+                                spotColor = NeoLimeGlow20
+                            ),
                         shape = RoundedCornerShape(50.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = NeoLime)
                     ) {
@@ -293,6 +366,8 @@ fun ProfileScreen(
             }
 
             // ── Tab Content ────────────────────────────────────────────
+            item { Spacer(modifier = Modifier.height(12.dp)) }
+
             if (contentPosts.isEmpty()) {
                 item {
                     EmptyTabContent(
@@ -411,20 +486,28 @@ private fun PostGridItem(
                     )
                 }
 
-                DropdownMenu(
-                    expanded = showMenu,
-                    onDismissRequest = { showMenu = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Remove") },
-                        onClick = {
-                            showMenu = false
-                            onRemoveSaved()
-                        },
-                        leadingIcon = {
-                            Icon(Icons.Default.BookmarkBorder, contentDescription = null)
-                        }
+                MaterialTheme(
+                    colorScheme = MaterialTheme.colorScheme.copy(
+                        surface = NeoDarkGray.copy(alpha = 0.85f)
                     )
+                ) {
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false },
+                        modifier = Modifier
+                            .border(BorderStroke(0.5.dp, GlassBorderMid), RoundedCornerShape(12.dp))
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Remove", color = TextWhite) },
+                            onClick = {
+                                showMenu = false
+                                onRemoveSaved()
+                            },
+                            leadingIcon = {
+                                Icon(Icons.Default.BookmarkBorder, contentDescription = null, tint = TextWhite60)
+                            }
+                        )
+                    }
                 }
             }
         }

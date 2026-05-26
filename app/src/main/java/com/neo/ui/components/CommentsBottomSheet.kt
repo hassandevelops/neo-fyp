@@ -1,8 +1,12 @@
 package com.neo.ui.components
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -13,13 +17,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.neo.data.model.Comment
-import com.neo.ui.theme.NeoGray800
-import com.neo.ui.theme.NeoLime
-import com.neo.ui.theme.TextWhite
-import com.neo.ui.theme.TextWhite60
+import com.neo.ui.theme.*
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -49,7 +51,11 @@ fun CommentsBottomSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        modifier = modifier
+        modifier = modifier,
+        containerColor = NeoDarkGray,     // Solid charcoal surface
+        scrimColor = Color(0x990C0C0E),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        tonalElevation = 0.dp
     ) {
         Column(
             modifier = Modifier
@@ -70,10 +76,17 @@ fun CommentsBottomSheet(
                     fontWeight = FontWeight.Bold
                 )
 
-                IconButton(onClick = onDismiss) {
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .background(NeoGray800, CircleShape)
+                ) {
                     Icon(
                         imageVector = Icons.Default.Close,
-                        contentDescription = "Close"
+                        contentDescription = "Close",
+                        tint = TextWhite,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -112,8 +125,9 @@ fun CommentsBottomSheet(
                 Surface(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                     color = NeoGray800,
-                    shape = RoundedCornerShape(8.dp),
-                    tonalElevation = 0.dp
+                    shape = RoundedCornerShape(16.dp),
+                    tonalElevation = 0.dp,
+                    border = BorderStroke(0.5.dp, BorderWhite10)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(8.dp),
@@ -157,9 +171,14 @@ fun CommentsBottomSheet(
                         )
                     },
                     maxLines = 3,
+                    shape = RoundedCornerShape(24.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = TextWhite,
                         unfocusedTextColor = TextWhite,
+                        focusedBorderColor = GlassBorderGlow,
+                        unfocusedBorderColor = BorderWhite10,
+                        focusedContainerColor = GlassWhite8,
+                        unfocusedContainerColor = Color.Transparent,
                         cursorColor = NeoLime
                     ),
                     supportingText = {
@@ -180,7 +199,13 @@ fun CommentsBottomSheet(
                             replyingTo = null
                         }
                     },
-                    enabled = commentText.isNotBlank()
+                    enabled = commentText.isNotBlank(),
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(
+                            if (commentText.isNotBlank()) NeoGray700 else NeoGray800,
+                            CircleShape
+                        )
                 ) {
                     Icon(
                         imageVector = Icons.Default.Send,
