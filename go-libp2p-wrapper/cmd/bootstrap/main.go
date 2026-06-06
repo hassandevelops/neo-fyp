@@ -79,6 +79,23 @@ func main() {
 	}
 	defer host.Close()
 
+	// Notifiee: when a peer connects, record its remote address in the
+	// peerstore. This is critical when the peer is behind NAT and the only
+	// reachable address is the one it connected FROM (not its own listen
+	// addresses which are loopback / VPN tunnel).
+	host.Network().Notify(&network.NotifyBundle{
+		ConnectedF: func(_ network.Network, c network.Conn) {
+			remotePID := c.RemotePeer()
+			remoteAddr := c.RemoteMultiaddr()
+			// Add the remote address to the peerstore so future dials can use it
+			host.Peerstore().AddAddr(remotePID, remoteAddr, 24*time.Hour)
+			log.Printf("notifiee: peer=%s connected from %s (added to peerstore)", remotePID, remoteAddr)
+		},
+		DisconnectedF: func(_ network.Network, c network.Conn) {
+			log.Printf("notifiee: peer=%s disconnected from %s", c.RemotePeer(), c.RemoteMultiaddr())
+		},
+	})
+
 	ctx := context.Background()
 
 	dstore := dsync.MutexWrap(ds.NewMapDatastore())
@@ -157,38 +174,58 @@ func main() {
 		pxMu.Unlock()
 	})
 
-	// Stream proxy: relay data between connected peers
+	// Stream proxy: relay data between connected peers.
+	// IMPORTANT: do not close s on function return — that would kill the channel
+	// mid-conversation. Instead, wait for both io.Copy directions to finish
+	// before closing the streams.
 	host.SetStreamHandler(ProxyProtocol, func(s network.Stream) {
-		defer s.Close()
+		log.Printf("proxy: handler entered, remote=%s", s.Conn().RemotePeer())
 		var msg map[string]interface{}
 		if err := json.NewDecoder(s).Decode(&msg); err != nil {
 			log.Printf("proxy: decode error: %v", err)
+			s.Close()
 			return
 		}
 		targetStr, ok := msg["target"].(string)
 		if !ok {
 			log.Printf("proxy: missing target")
+			s.Close()
 			return
 		}
 		target, err := peer.Decode(targetStr)
 		if err != nil {
 			log.Printf("proxy: invalid target: %v", err)
+			s.Close()
 			return
 		}
 
 		// Open a stream to the target peer
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
+		log.Printf("proxy: dialing target=%s with addrs=%v", target, host.Peerstore().Addrs(target))
 		targetStream, err := host.NewStream(ctx, target, ProxyProtocol)
+		cancel()
 		if err != nil {
 			log.Printf("proxy: dial target %s: %v", target, err)
+			s.Close()
 			return
 		}
-		defer targetStream.Close()
+		log.Printf("proxy: connected to target %s, starting relay", target)
 
-		// Copy data bidirectionally
-		go func() { io.Copy(targetStream, s) }()
-		io.Copy(s, targetStream)
+		// Copy data bidirectionally. Use a wait group so we only close the
+		// streams once BOTH directions have finished.
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			io.Copy(targetStream, s)
+		}()
+		go func() {
+			defer wg.Done()
+			io.Copy(s, targetStream)
+		}()
+		wg.Wait()
+		s.Close()
+		targetStream.Close()
 	})
 
 	// Listen for connection events and add peers to the routing table

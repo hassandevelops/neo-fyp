@@ -669,8 +669,11 @@ func (n *Libp2pNode) discoveryLoop() {
 				continue
 			}
 			log.Printf("discover: found %d providers", len(peers))
-			for _, pi := range peers {
+			log.Printf("discover: LOOP_START about to iterate %d peers", len(peers))
+			for idx, pi := range peers {
+				log.Printf("discover:   [IDX=%d] provider=%s addrs=%v self=%v", idx, pi.ID.String(), pi.Addrs, pi.ID == n.host.ID())
 				if pi.ID == n.host.ID() {
+					log.Printf("discover:   [IDX=%d] SKIP self", idx)
 					continue
 				}
 				var isBootstrap bool
@@ -798,8 +801,11 @@ func (n *Libp2pNode) discoveryLoop() {
 				continue
 			}
 			log.Printf("discover: found %d providers", len(peers))
-			for _, pi := range peers {
+			log.Printf("discover: LOOP2_START about to iterate %d peers", len(peers))
+			for idx, pi := range peers {
+				log.Printf("discover:   [L2_IDX=%d] provider=%s addrs=%v", idx, pi.ID.String(), pi.Addrs)
 				if pi.ID == n.host.ID() {
+					log.Printf("discover:   [L2_IDX=%d] SKIP self", idx)
 					continue
 				}
 				var isBootstrap bool
