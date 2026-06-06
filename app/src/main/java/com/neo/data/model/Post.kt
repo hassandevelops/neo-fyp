@@ -27,8 +27,16 @@ data class Post(
     val imageWidth: Int? = null,       // Image width in pixels
     val imageHeight: Int? = null,      // Image height in pixels
     val timestamp: Long,               // Unix timestamp (milliseconds) when post was created
-    val signature: String,             // Ed25519 signature of the post
+    val signature: String,             // Cryptographic signature of the post
     val publicKey: String,             // Author's public key for signature verification
+    val keyAlgorithm: String = "RSA", // Algorithm used to sign (preserved across sync)
     val ttl: Int = 7,                 // Time-to-live in hops (decrements on each forward)
-    val firstSeenTimestamp: Long       // When this device first received the post
+    val firstSeenTimestamp: Long,      // When this device first received the post
+    val isDeleted: Boolean = false,    // Tombstone flag for CRDT deletion
+    val eventId: String? = null,       // SHA-256 event ID for event-sourced relay
+    val authorDid: String? = null,     // Decentralized identifier (did:key) for event log relay
+    val sequenceNum: Long? = null,     // Monotonically increasing per-author event counter
+    val eventType: String? = null,     // "CREATE_POST" etc. for event log reconstruction
+    val eventSignature: String? = null,// RSA signature of eventId for verification
+    val eventPayload: String? = null   // JSON payload for event log reconstruction
 )

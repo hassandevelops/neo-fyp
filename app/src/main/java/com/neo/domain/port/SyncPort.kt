@@ -11,4 +11,5 @@ interface ISyncPort {
     suspend fun broadcastReaction(reaction: Reaction)
     val connectedPeersCount: StateFlow<Int>
     val connectedPeers: StateFlow<List<String>>
+    fun forceSyncNow()
 }

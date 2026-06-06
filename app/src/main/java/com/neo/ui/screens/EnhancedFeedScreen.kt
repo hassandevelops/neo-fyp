@@ -34,7 +34,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -92,13 +91,7 @@ fun EnhancedFeedScreen(
         }
     )
 
-    val density = LocalDensity.current
     var headerHeightPx by remember { mutableIntStateOf(120) }
-    val headerHeightDp by remember {
-        derivedStateOf {
-            with(density) { headerHeightPx.toDp() }
-        }
-    }
 
     val lazyListState = rememberLazyListState()
     var isScrollingDown by remember { mutableStateOf(false) }
@@ -125,14 +118,30 @@ fun EnhancedFeedScreen(
         label = "header_offset"
     )
 
-    Box(modifier = modifier.fillMaxSize()) {
-        GradientBackground {
+    Column(modifier = modifier.fillMaxSize()) {
+        EnhancedHeader(
+            modifier = Modifier
+                .onGloballyPositioned { coords ->
+                    headerHeightPx = coords.size.height
+                }
+                .graphicsLayer {
+                    translationY = headerTranslationY
+                },
+            onProfileClick = onNavigateToProfile,
+            onSearchClick = onNavigateToSearch,
+            onNotificationsClick = onNavigateToNotifications,
+            onSettingsClick = onNavigateToSettings,
+            notificationCount = notificationCount
+        )
+
+        GradientBackground(modifier = Modifier.weight(1f)) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .pullRefresh(pullRefreshState)
             ) {
-                when {
+                Box(modifier = Modifier.fillMaxSize().padding(top = 120.dp)) {
+                    when {
                     refreshLoadState is LoadState.Loading && pagedPosts.itemCount == 0 -> {
                         LoadingShimmer()
                     }
@@ -160,16 +169,9 @@ fun EnhancedFeedScreen(
                         LazyColumn(
                             state = lazyListState,
                             modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(top = headerHeightDp, bottom = 16.dp),
+                            contentPadding = PaddingValues(bottom = 16.dp),
                             verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            // BLE Mesh Status Card
-                            item {
-                                BLEMeshCard(
-                                    connectedPeers = connectedPeersCount,
-                                    onClick = onNavigateToBLEStatus
-                                )
-                            }
 
                             if (postCreationState is CreatePostViewModel.UiState.Loading) {
                                 item {
@@ -240,7 +242,17 @@ fun EnhancedFeedScreen(
                             }
                         }
                     }
+                    }
                 }
+
+                // BLE Mesh Status Card — always visible regardless of feed state
+                BLEMeshCard(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 8.dp),
+                    connectedPeers = connectedPeersCount,
+                    onClick = onNavigateToBLEStatus
+                )
 
                 PullRefreshIndicator(
                     refreshing = isFeedRefreshing,
@@ -251,21 +263,6 @@ fun EnhancedFeedScreen(
                 )
             }
         }
-
-        EnhancedHeader(
-            modifier = Modifier
-                .onGloballyPositioned { coords ->
-                    headerHeightPx = coords.size.height
-                }
-                .graphicsLayer {
-                    translationY = headerTranslationY
-                },
-            onProfileClick = onNavigateToProfile,
-            onSearchClick = onNavigateToSearch,
-            onNotificationsClick = onNavigateToNotifications,
-            onSettingsClick = onNavigateToSettings,
-            notificationCount = notificationCount
-        )
     }
 
     // Comments Bottom Sheet

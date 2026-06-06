@@ -109,7 +109,7 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
-    fun updateProfile(name: String, bio: String, imageUri: String?) {
+    fun updateProfile(name: String, bio: String, imageUri: String? = null) {
         viewModelScope.launch {
             _uiState.value = UiState.Saving
             try {

@@ -35,7 +35,7 @@ class AckManager @Inject constructor(
         val messageId: String,
         val message: Message,
         val peerAddress: String,
-        val sendFunction: suspend (Message, String) -> Unit,
+        val sendFunction: suspend (Message, String) -> Boolean,
         val onSuccess: (() -> Unit)? = null,
         val onFailure: ((String) -> Unit)? = null,
         var retryCount: Int = 0,
@@ -60,7 +60,7 @@ class AckManager @Inject constructor(
         messageId: String,
         message: Message,
         peerAddress: String,
-        sendFunction: suspend (Message, String) -> Unit,
+        sendFunction: suspend (Message, String) -> Boolean,
         onSuccess: (() -> Unit)? = null,
         onFailure: ((String) -> Unit)? = null
     ) {
@@ -73,12 +73,21 @@ class AckManager @Inject constructor(
             onFailure = onFailure
         )
         
-        pendingMessages[messageId] = pending
+        val previous = pendingMessages.put(messageId, pending)
+        if (previous != null) {
+            Log.w(TAG, "Overwriting pending messageId=$messageId (prev peer=${previous.peerAddress}, new peer=$peerAddress)")
+        }
 
         scope.launch {
             try {
-                pending.sendFunction(pending.message, pending.peerAddress)
-                scheduleRetry(pending)
+                val sent = pending.sendFunction(pending.message, pending.peerAddress)
+                if (!sent) {
+                    // Send returned false — connection lost, schedule retry immediately
+                    Log.w(TAG, "Initial send of $messageId returned false, scheduling retry")
+                    scheduleRetry(pending)
+                } else {
+                    scheduleRetry(pending)
+                }
             } catch (e: Exception) {
                 pendingMessages.remove(messageId)
                 pending.onFailure?.invoke("Initial send failed: ${e.message}")
@@ -203,7 +212,6 @@ class AckManager @Inject constructor(
      */
     fun shutdown() {
         clear()
-        scope.cancel()
         
         Log.d(TAG, "AckManager shutdown")
     }

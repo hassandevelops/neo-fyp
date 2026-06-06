@@ -13,7 +13,9 @@ import com.neo.data.dao.CommentDao
 import com.neo.data.dao.NotificationDao
 import com.neo.data.dao.ReactionDao
 import com.neo.data.dao.SavedPostDao
+import com.neo.data.dao.EventLogDao
 import com.neo.data.model.Device
+import com.neo.data.model.EventLog
 import com.neo.data.model.Post
 import com.neo.data.model.BlockedUser
 import com.neo.data.model.Comment
@@ -33,9 +35,10 @@ import com.neo.data.model.SavedPost
         Comment::class,
         Reaction::class,
         Notification::class,
-        SavedPost::class
+        SavedPost::class,
+        EventLog::class
     ],
-    version = 8,
+    version = 12,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -47,6 +50,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun reactionDao(): ReactionDao
     abstract fun notificationDao(): NotificationDao
     abstract fun savedPostDao(): SavedPostDao
+    abstract fun eventLogDao(): EventLogDao
 
     companion object {
         const val DATABASE_NAME = "neo_database"
@@ -233,6 +237,46 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE posts ADD COLUMN keyAlgorithm TEXT NOT NULL DEFAULT 'Ed25519'")
+            }
+        }
+
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS event_log (
+                        eventId TEXT NOT NULL PRIMARY KEY,
+                        authorDid TEXT NOT NULL,
+                        sequenceNum INTEGER NOT NULL,
+                        eventType TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        signature TEXT NOT NULL,
+                        timestamp INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_event_log_author_seq ON event_log(authorDid, sequenceNum)")
+            }
+        }
+
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE posts ADD COLUMN isDeleted INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE posts ADD COLUMN eventId TEXT")
+                database.execSQL("ALTER TABLE posts ADD COLUMN authorDid TEXT")
+                database.execSQL("ALTER TABLE posts ADD COLUMN sequenceNum INTEGER")
+                database.execSQL("ALTER TABLE posts ADD COLUMN eventType TEXT")
+                database.execSQL("ALTER TABLE posts ADD COLUMN eventSignature TEXT")
+                database.execSQL("ALTER TABLE posts ADD COLUMN eventPayload TEXT")
+            }
+        }
+
         private fun getTableColumns(database: SupportSQLiteDatabase, tableName: String): Set<String> {
             val columns = mutableSetOf<String>()
             database.query("PRAGMA table_info($tableName)").use { cursor ->
@@ -258,7 +302,11 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_4_5,
                         MIGRATION_5_6,
                         MIGRATION_6_7,
-                        MIGRATION_7_8
+                        MIGRATION_7_8,
+                        MIGRATION_8_9,
+                        MIGRATION_9_10,
+                        MIGRATION_10_11,
+                        MIGRATION_11_12
                     )
                     .build()
                 INSTANCE = instance

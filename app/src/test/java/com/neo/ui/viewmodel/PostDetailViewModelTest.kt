@@ -20,8 +20,11 @@ import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
 class PostDetailViewModelTest {
 
     private lateinit var savedStateHandle: SavedStateHandle
@@ -34,7 +37,7 @@ class PostDetailViewModelTest {
     private lateinit var cryptoManager: CryptoManager
     private lateinit var notificationRepository: NotificationRepository
     private lateinit var savedPostRepository: SavedPostRepository
-    private val testDispatcher = UnconfinedTestDispatcher()
+    private val testDispatcher = StandardTestDispatcher()
 
     @Before
     fun setup() {
@@ -74,51 +77,55 @@ class PostDetailViewModelTest {
     }
 
     @Test
-    fun `create comment success updates ui state`() = runTest {
+    fun `create comment success updates ui state`() = runTest(testDispatcher) {
         coEvery { createCommentUseCase(any(), any(), any(), any()) } returns Result.success(mockk(relaxed = true))
         val vm = createViewModel()
 
         vm.createComment(postId = "post-1", content = "Nice!", authorName = "Alice")
+        advanceUntilIdle()
 
         assertTrue(vm.uiState.value is PostDetailViewModel.UiState.Success)
     }
 
     @Test
-    fun `create comment failure updates ui state`() = runTest {
+    fun `create comment failure updates ui state`() = runTest(testDispatcher) {
         coEvery { createCommentUseCase(any(), any(), any(), any()) } returns Result.failure(IllegalArgumentException("Too long"))
         val vm = createViewModel()
 
         vm.createComment(postId = "post-1", content = "A".repeat(600), authorName = "Alice")
+        advanceUntilIdle()
 
         assertTrue(vm.uiState.value is PostDetailViewModel.UiState.Error)
     }
 
     @Test
-    fun `toggle like when not liked creates reaction`() = runTest {
+    fun `toggle like when not liked creates reaction`() = runTest(testDispatcher) {
         every { cryptoManager.getDeviceId() } returns "device-1"
         coEvery { reactionRepository.hasUserReacted("post-1", "device-1", ReactionType.LIKE) } returns false
         coEvery { createReactionUseCase("post-1", "Alice", ReactionType.LIKE) } returns Result.success(mockk(relaxed = true))
         val vm = createViewModel()
 
         vm.toggleLike(postId = "post-1", userName = "Alice")
+        advanceUntilIdle()
 
         coVerify { createReactionUseCase("post-1", "Alice", ReactionType.LIKE) }
     }
 
     @Test
-    fun `toggle like when liked deletes reaction`() = runTest {
+    fun `toggle like when liked deletes reaction`() = runTest(testDispatcher) {
         every { cryptoManager.getDeviceId() } returns "device-1"
         coEvery { reactionRepository.hasUserReacted("post-1", "device-1", ReactionType.LIKE) } returns true
         coEvery { deleteReactionUseCase("post-1", ReactionType.LIKE) } returns Result.success(Unit)
         val vm = createViewModel()
 
         vm.toggleLike(postId = "post-1", userName = "Alice")
+        advanceUntilIdle()
 
         coVerify { deleteReactionUseCase("post-1", ReactionType.LIKE) }
     }
 
     @Test
-    fun `toggle like failure calls error callback`() = runTest {
+    fun `toggle like failure calls error callback`() = runTest(testDispatcher) {
         every { cryptoManager.getDeviceId() } returns "device-1"
         coEvery { reactionRepository.hasUserReacted(any(), any(), any()) } returns false
         coEvery { createReactionUseCase(any(), any(), any()) } returns Result.failure(Exception("Network error"))
@@ -126,6 +133,7 @@ class PostDetailViewModelTest {
 
         var errorMessage = ""
         vm.toggleLike(postId = "post-1", userName = "Alice", onError = { errorMessage = it })
+        advanceUntilIdle()
 
         assertEquals("Network error", errorMessage)
     }
@@ -173,18 +181,19 @@ class PostDetailViewModelTest {
     }
 
     @Test
-    fun `create comment inserts notification on success`() = runTest {
+    fun `create comment inserts notification on success`() = runTest(testDispatcher) {
         coEvery { createCommentUseCase(any(), any(), any(), any()) } returns Result.success(mockk(relaxed = true))
         coEvery { notificationRepository.insert(any()) } just Runs
         val vm = createViewModel()
 
         vm.createComment(postId = "post-1", content = "Nice!", authorName = "Alice")
+        advanceUntilIdle()
 
         coVerify { notificationRepository.insert(match { it.type == "comment" }) }
     }
 
     @Test
-    fun `toggle like inserts notification for new like`() = runTest {
+    fun `toggle like inserts notification for new like`() = runTest(testDispatcher) {
         every { cryptoManager.getDeviceId() } returns "device-1"
         coEvery { reactionRepository.hasUserReacted("post-1", "device-1", ReactionType.LIKE) } returns false
         coEvery { createReactionUseCase("post-1", "Alice", ReactionType.LIKE) } returns Result.success(mockk(relaxed = true))
@@ -192,18 +201,20 @@ class PostDetailViewModelTest {
         val vm = createViewModel()
 
         vm.toggleLike(postId = "post-1", userName = "Alice")
+        advanceUntilIdle()
 
         coVerify { notificationRepository.insert(match { it.type == "like" }) }
     }
 
     @Test
-    fun `toggle like does not insert notification for unlike`() = runTest {
+    fun `toggle like does not insert notification for unlike`() = runTest(testDispatcher) {
         every { cryptoManager.getDeviceId() } returns "device-1"
         coEvery { reactionRepository.hasUserReacted("post-1", "device-1", ReactionType.LIKE) } returns true
         coEvery { deleteReactionUseCase("post-1", ReactionType.LIKE) } returns Result.success(Unit)
         val vm = createViewModel()
 
         vm.toggleLike(postId = "post-1", userName = "Alice")
+        advanceUntilIdle()
 
         coVerify(exactly = 0) { notificationRepository.insert(any()) }
     }

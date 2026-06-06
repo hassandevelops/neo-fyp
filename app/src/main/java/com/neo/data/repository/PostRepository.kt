@@ -26,6 +26,11 @@ class PostRepository @Inject constructor(
 
     fun getPostsByAuthor(authorId: String): Flow<List<Post>> = postDao.getPostsByAuthor(authorId)
 
+    suspend fun getPostsByAuthorList(authorId: String): List<Post> = postDao.getPostsByAuthorList(authorId)
+
+    suspend fun getPostsByAuthorList(did: String, deviceId: String): List<Post> =
+        postDao.getPostsByAuthorIds(listOf(did, deviceId))
+
     /**
      * Get all posts once for non-reactive operations.
      */

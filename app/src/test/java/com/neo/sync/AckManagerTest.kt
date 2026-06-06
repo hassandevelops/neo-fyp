@@ -40,10 +40,10 @@ class AckManagerTest {
     fun `test sendWithAck tracks message`() {
         // Arrange
         val messageId = "msg-1"
-        val message = Message.PostBroadcast("post-1", "author-1", "Author", "Content", 1000L, "sig", "key", 7)
+        val message = Message.PostBroadcast("post-1", "author-1", "Author", "Content", 1000L, "sig", "key", ttl = 7)
 
         // Act
-        ackManager.sendWithAck(messageId, message, "peer-1", { _, _ -> sendCallCount++ })
+        ackManager.sendWithAck(messageId, message, "peer-1", { _, _ -> sendCallCount++; true })
 
         // Assert
         assertEquals(1, ackManager.getPendingCount())
@@ -54,13 +54,13 @@ class AckManagerTest {
     fun `test handleAck removes message and calls success`() {
         // Arrange
         val messageId = "msg-2"
-        val message = Message.PostBroadcast("post-1", "author-1", "Author", "Content", 1000L, "sig", "key", 7)
+        val message = Message.PostBroadcast("post-1", "author-1", "Author", "Content", 1000L, "sig", "key", ttl = 7)
 
         ackManager.sendWithAck(
             messageId,
             message,
             "peer-1",
-            { _, _ -> sendCallCount++ },
+            { _, _ -> sendCallCount++; true },
             onSuccess = { successCallCount++ }
         )
 
@@ -87,13 +87,13 @@ class AckManagerTest {
     fun `test retry mechanism with exponential backoff`() {
         // Arrange
         val messageId = "msg-3"
-        val message = Message.PostBroadcast("post-1", "author-1", "Author", "Content", 1000L, "sig", "key", 7)
+        val message = Message.PostBroadcast("post-1", "author-1", "Author", "Content", 1000L, "sig", "key", ttl = 7)
 
         ackManager.sendWithAck(
             messageId,
             message,
             "peer-1",
-            { _, _ -> sendCallCount++ }
+            { _, _ -> sendCallCount++; true }
         )
 
         // Act - advance past first retry (1 second timeout)
@@ -108,13 +108,13 @@ class AckManagerTest {
     fun `test max retries calls failure callback`() {
         // Arrange
         val messageId = "msg-4"
-        val message = Message.PostBroadcast("post-1", "author-1", "Author", "Content", 1000L, "sig", "key", 7)
+        val message = Message.PostBroadcast("post-1", "author-1", "Author", "Content", 1000L, "sig", "key", ttl = 7)
 
         ackManager.sendWithAck(
             messageId,
             message,
             "peer-1",
-            { _, _ -> sendCallCount++ },
+            { _, _ -> sendCallCount++; true },
             onFailure = { failureCallCount++ }
         )
 
@@ -132,9 +132,9 @@ class AckManagerTest {
     fun `test cancel stops tracking`() {
         // Arrange
         val messageId = "msg-5"
-        val message = Message.PostBroadcast("post-1", "author-1", "Author", "Content", 1000L, "sig", "key", 7)
+        val message = Message.PostBroadcast("post-1", "author-1", "Author", "Content", 1000L, "sig", "key", ttl = 7)
 
-        ackManager.sendWithAck(messageId, message, "peer-1", { _, _ -> sendCallCount++ })
+        ackManager.sendWithAck(messageId, message, "peer-1", { _, _ -> sendCallCount++; true })
 
         // Act
         ackManager.cancel(messageId)
@@ -146,11 +146,11 @@ class AckManagerTest {
     @Test
     fun `test clear removes all pending messages`() {
         // Arrange
-        val message = Message.PostBroadcast("post-1", "author-1", "Author", "Content", 1000L, "sig", "key", 7)
+        val message = Message.PostBroadcast("post-1", "author-1", "Author", "Content", 1000L, "sig", "key", ttl = 7)
 
-        ackManager.sendWithAck("msg-1", message, "peer-1", { _, _ -> })
-        ackManager.sendWithAck("msg-2", message, "peer-2", { _, _ -> })
-        ackManager.sendWithAck("msg-3", message, "peer-3", { _, _ -> })
+        ackManager.sendWithAck("msg-1", message, "peer-1", { _, _ -> true })
+        ackManager.sendWithAck("msg-2", message, "peer-2", { _, _ -> true })
+        ackManager.sendWithAck("msg-3", message, "peer-3", { _, _ -> true })
 
         // Act
         ackManager.clear()
@@ -162,10 +162,10 @@ class AckManagerTest {
     @Test
     fun `test getPendingMessageIds returns correct IDs`() {
         // Arrange
-        val message = Message.PostBroadcast("post-1", "author-1", "Author", "Content", 1000L, "sig", "key", 7)
+        val message = Message.PostBroadcast("post-1", "author-1", "Author", "Content", 1000L, "sig", "key", ttl = 7)
 
-        ackManager.sendWithAck("msg-1", message, "peer-1", { _, _ -> })
-        ackManager.sendWithAck("msg-2", message, "peer-2", { _, _ -> })
+        ackManager.sendWithAck("msg-1", message, "peer-1", { _, _ -> true })
+        ackManager.sendWithAck("msg-2", message, "peer-2", { _, _ -> true })
 
         // Act
         val ids = ackManager.getPendingMessageIds()

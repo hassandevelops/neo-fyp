@@ -1,5 +1,6 @@
 package com.neo.ui.viewmodel
 
+import android.app.Application
 import com.neo.domain.usecase.CreatePostUseCase
 import io.mockk.*
 import kotlinx.coroutines.Dispatchers
@@ -9,12 +10,15 @@ import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
 class CreatePostViewModelTest {
 
     private lateinit var createPostUseCase: CreatePostUseCase
-    private val testDispatcher = UnconfinedTestDispatcher()
+    private val testDispatcher = StandardTestDispatcher()
 
     @Before
     fun setup() {

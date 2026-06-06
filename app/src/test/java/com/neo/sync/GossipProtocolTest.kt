@@ -85,7 +85,7 @@ class GossipProtocolTest {
         coEvery { postRepository.getPostById(any()) } returns null
         coEvery { postRepository.insertPost(any()) } returns true
         every { cryptoManager.createPostMessage(any(), any(), any(), any()) } returns "message"
-        coEvery { cryptoManager.verify(any(), any(), any()) } returns true
+        every { cryptoManager.verify(any(), any(), any(), any()) } returns true
     }
 
     @Test
@@ -173,7 +173,7 @@ class GossipProtocolTest {
         coEvery { blockedUserRepository.isBlocked(any()) } returns false
         coEvery { rateLimiter.canAcceptInboundComment(any()) } returns true
         every { cryptoManager.createPostMessage(any(), any(), any(), any()) } returns "message"
-        coEvery { cryptoManager.verify(any(), any(), any()) } returns true
+        every { cryptoManager.verify(any(), any(), any(), any()) } returns true
         coEvery { commentRepository.insertComment(any()) } just Runs
 
         gossipProtocol.handleReceivedComment(commentBroadcast("comment-1"), "peer-1")
@@ -196,7 +196,7 @@ class GossipProtocolTest {
     fun `handleReceivedReaction stores new reaction`() = runTest {
         every { seenMessageCache.checkAndAdd(any()) } returns true
         coEvery { blockedUserRepository.isBlocked(any()) } returns false
-        coEvery { cryptoManager.verify(any(), any(), any()) } returns true
+        every { cryptoManager.verify(any(), any(), any(), any()) } returns true
         coEvery { rateLimiter.canAcceptInboundReaction(any()) } returns true
         coEvery { reactionRepository.insertReaction(any()) } just Runs
 

@@ -69,6 +69,23 @@ class MainActivity : ComponentActivity() {
             isBound = false
         }
     }
+
+    private var libP2pService: com.neo.libp2p.LibP2pService? = null
+    private var isLibP2pBound = false
+
+    private val libP2pServiceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            val binder = service as com.neo.libp2p.LibP2pService.LocalBinder
+            libP2pService = binder.getService()
+            isLibP2pBound = true
+            syncManager.setLibP2pService(binder.getService())
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            libP2pService = null
+            isLibP2pBound = false
+        }
+    }
     
     private var showPermissionRationale by mutableStateOf(false)
     private val deepLinkIntent = mutableStateOf<Intent?>(null)
@@ -80,6 +97,13 @@ class MainActivity : ComponentActivity() {
         val allGranted = permissions.values.all { it }
         if (allGranted) {
             startBluetoothService()
+            if (!isBound) {
+                bindService(Intent(this, BluetoothService::class.java), serviceConnection, Context.BIND_AUTO_CREATE)
+            }
+            startLibP2pService()
+            if (!isLibP2pBound) {
+                bindService(Intent(this, com.neo.libp2p.LibP2pService::class.java), libP2pServiceConnection, Context.BIND_AUTO_CREATE)
+            }
         } else {
             showPermissionRationale = true
         }
@@ -88,7 +112,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         window.requestFeature(android.view.Window.FEATURE_NO_TITLE)
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        )
         deepLinkIntent.value = intent
         
         // Handle the splash screen transition.
@@ -149,17 +176,23 @@ class MainActivity : ComponentActivity() {
     
     override fun onStart() {
         super.onStart()
-        // Bind to Bluetooth service
-        val intent = Intent(this, BluetoothService::class.java)
-        bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        if (!isBound) {
+            bindService(Intent(this, BluetoothService::class.java), serviceConnection, Context.BIND_AUTO_CREATE)
+        }
+        if (!isLibP2pBound) {
+            bindService(Intent(this, com.neo.libp2p.LibP2pService::class.java), libP2pServiceConnection, Context.BIND_AUTO_CREATE)
+        }
     }
-    
-    override fun onStop() {
-        super.onStop()
-        // Unbind from service
+
+    override fun onDestroy() {
+        super.onDestroy()
         if (isBound) {
             unbindService(serviceConnection)
             isBound = false
+        }
+        if (isLibP2pBound) {
+            unbindService(libP2pServiceConnection)
+            isLibP2pBound = false
         }
     }
     
@@ -193,8 +226,15 @@ class MainActivity : ComponentActivity() {
         }
         
         if (permissionsToRequest.isEmpty()) {
-            // All permissions granted, start service
+            // All permissions granted, start and bind services
             startBluetoothService()
+            if (!isBound) {
+                bindService(Intent(this, BluetoothService::class.java), serviceConnection, Context.BIND_AUTO_CREATE)
+            }
+            startLibP2pService()
+            if (!isLibP2pBound) {
+                bindService(Intent(this, com.neo.libp2p.LibP2pService::class.java), libP2pServiceConnection, Context.BIND_AUTO_CREATE)
+            }
         } else {
             // Request permissions
             permissionLauncher.launch(permissionsToRequest.toTypedArray())
@@ -206,6 +246,18 @@ class MainActivity : ComponentActivity() {
      */
     private fun startBluetoothService() {
         val intent = Intent(this, BluetoothService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+    
+    /**
+     * Start the libp2p foreground service.
+     */
+    private fun startLibP2pService() {
+        val intent = Intent(this, com.neo.libp2p.LibP2pService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
         } else {

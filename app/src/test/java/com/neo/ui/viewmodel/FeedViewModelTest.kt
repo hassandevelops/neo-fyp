@@ -4,6 +4,10 @@ import com.neo.data.repository.NotificationRepository
 import com.neo.data.repository.SavedPostRepository
 import com.neo.domain.port.ISyncPort
 import com.neo.domain.usecase.GetFeedUseCase
+import com.neo.sync.SyncManager
+import com.neo.data.preferences.UserPreferences
+import com.neo.security.CryptoManager
+import com.neo.domain.usecase.CreatePostUseCase
 import io.mockk.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -26,9 +30,27 @@ class FeedViewModelTest {
     private val syncPort: ISyncPort = mockk()
     private val notificationRepository: NotificationRepository = mockk()
     private val savedPostRepository: SavedPostRepository = mockk()
+    private val syncManager: SyncManager = mockk(relaxed = true)
+    private val userPreferences: UserPreferences = mockk(relaxed = true)
+    private val cryptoManager: CryptoManager = mockk(relaxed = true)
+    private val createPostUseCase: CreatePostUseCase = mockk(relaxed = true)
     private val testDispatcher = StandardTestDispatcher()
 
     private lateinit var viewModel: FeedViewModel
+
+    private fun createViewModel(): FeedViewModel {
+        return FeedViewModel(
+            mockk(relaxed = true),
+            getFeedUseCase,
+            syncPort,
+            syncManager,
+            notificationRepository,
+            savedPostRepository,
+            userPreferences,
+            cryptoManager,
+            createPostUseCase
+        )
+    }
 
     @Before
     fun setup() {
@@ -36,6 +58,8 @@ class FeedViewModelTest {
         MockKAnnotations.init(this)
         every { syncPort.connectedPeers } returns MutableStateFlow(emptyList())
         every { savedPostRepository.observeSavedPostIds() } returns MutableStateFlow(emptySet())
+        every { userPreferences.profileImageUri } returns null
+        every { cryptoManager.getDeviceId() } returns "user-1"
     }
 
     @After
@@ -50,7 +74,7 @@ class FeedViewModelTest {
         every { syncPort.connectedPeersCount } returns peersCount
         every { notificationRepository.getUnreadCount() } returns MutableStateFlow(0)
 
-        viewModel = FeedViewModel(mockk(relaxed = true), getFeedUseCase, syncPort, notificationRepository, savedPostRepository)
+        viewModel = createViewModel()
         backgroundScope.launch(testDispatcher) { viewModel.connectedPeersCount.collect { } }
         advanceUntilIdle()
 
@@ -63,7 +87,7 @@ class FeedViewModelTest {
         every { syncPort.connectedPeersCount } returns MutableStateFlow(0)
         every { notificationRepository.getUnreadCount() } returns MutableStateFlow(0)
 
-        viewModel = FeedViewModel(mockk(relaxed = true), getFeedUseCase, syncPort, notificationRepository, savedPostRepository)
+        viewModel = createViewModel()
         advanceUntilIdle()
 
         assertNotNull(viewModel.pagedPosts)
@@ -76,7 +100,7 @@ class FeedViewModelTest {
         every { syncPort.connectedPeersCount } returns MutableStateFlow(0)
         every { notificationRepository.getUnreadCount() } returns MutableStateFlow(0)
 
-        viewModel = FeedViewModel(mockk(relaxed = true), getFeedUseCase, syncPort, notificationRepository, savedPostRepository)
+        viewModel = createViewModel()
         advanceUntilIdle()
 
         assertFalse(viewModel.isRefreshing.value)
@@ -88,7 +112,7 @@ class FeedViewModelTest {
         every { syncPort.connectedPeersCount } returns MutableStateFlow(0)
         every { notificationRepository.getUnreadCount() } returns MutableStateFlow(0)
 
-        viewModel = FeedViewModel(mockk(relaxed = true), getFeedUseCase, syncPort, notificationRepository, savedPostRepository)
+        viewModel = createViewModel()
         backgroundScope.launch(testDispatcher) { viewModel.isRefreshing.collect { } }
         advanceUntilIdle()
 
@@ -106,7 +130,7 @@ class FeedViewModelTest {
         every { syncPort.connectedPeersCount } returns MutableStateFlow(0)
         every { notificationRepository.getUnreadCount() } returns MutableStateFlow(5)
 
-        viewModel = FeedViewModel(mockk(relaxed = true), getFeedUseCase, syncPort, notificationRepository, savedPostRepository)
+        viewModel = createViewModel()
         backgroundScope.launch(testDispatcher) { viewModel.notificationCount.collect { } }
         advanceUntilIdle()
 

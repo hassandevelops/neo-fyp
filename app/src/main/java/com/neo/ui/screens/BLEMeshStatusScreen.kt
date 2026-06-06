@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -26,6 +28,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neo.R
@@ -41,6 +45,7 @@ import kotlin.math.sin
 @Composable
 fun BLEMeshStatusScreen(
     connectedPeers: List<String>,
+    onForceSync: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -257,6 +262,31 @@ fun BLEMeshStatusScreen(
                             .background(if (index == 0) NeoLime else TextWhite20)
                     )
                 }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            Spacer(Modifier.height(24.dp))
+
+            // ── Force Sync ──────────────────────────────────────────────
+            Button(
+                onClick = onForceSync,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = NeoLime.copy(alpha = 0.2f),
+                    contentColor = NeoLime
+                ),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Sync,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Force Sync Now", fontWeight = FontWeight.SemiBold)
             }
 
             Spacer(Modifier.height(24.dp))

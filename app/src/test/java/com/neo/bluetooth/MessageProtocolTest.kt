@@ -64,26 +64,22 @@ class MessageProtocolTest {
     }
 
     @Test
-    fun `serialize SyncRequest`() {
-        val msg = Message.SyncRequest(lastTimestamp = 500L)
+    fun `serialize EventSyncRequest`() {
+        val msg = Message.EventSyncRequest(requesterDid = "did:key:abc", lastKnownTimestamp = 500L)
         val json = protocol.serialize(msg)
         assertNotNull(json)
         val deserialized = protocol.deserialize(json)
-        assertTrue(deserialized is Message.SyncRequest)
+        assertTrue(deserialized is Message.EventSyncRequest)
     }
 
     @Test
-    fun `serialize SyncResponse`() {
-        val posts = listOf(
-            Message.PostBroadcast("p1", "a1", "Alice", "Content", 1000L, "sig", "pk", 7)
-        )
-        val msg = Message.SyncResponse(posts = posts)
+    fun `serialize EventSyncResponse`() {
+        val events = emptyList<EventLogDto>()
+        val msg = Message.EventSyncResponse(authorDid = "did:key:abc", events = events)
         val json = protocol.serialize(msg)
         assertNotNull(json)
         val deserialized = protocol.deserialize(json)
-        assertTrue(deserialized is Message.SyncResponse)
-        val response = deserialized as Message.SyncResponse
-        assertEquals(1, response.posts.size)
+        assertTrue(deserialized is Message.EventSyncResponse)
     }
 
     @Test

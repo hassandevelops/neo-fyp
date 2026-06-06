@@ -22,3 +22,6 @@
 
 # Keep data models
 -keep class com.neo.data.model.** { *; }
+
+# Keep GoLibP2pNode and related transport classes
+-keep class com.neo.libp2p.** { *; }

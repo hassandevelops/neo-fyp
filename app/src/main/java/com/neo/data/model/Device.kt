@@ -14,5 +14,6 @@ data class Device(
     val deviceName: String,            // Display name of the device owner
     val publicKey: String,             // Device's public key
     val lastSeenTimestamp: Long,       // Last time we connected to this device
-    val bluetoothAddress: String? = null  // Bluetooth MAC address (if available)
+    val peerAddress: String? = null,   // Peer address (BLE MAC or libp2p PeerId)
+    val transport: String = "ble"      // "ble" or "libp2p"
 )

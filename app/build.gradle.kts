@@ -148,4 +148,7 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    // Go libp2p binary bundled in assets/
+    // (neoserver cross-compiled from go-libp2p-wrapper/)
+    // jvm-libp2p has been replaced — see MIGRATION_PLAN.md
 }

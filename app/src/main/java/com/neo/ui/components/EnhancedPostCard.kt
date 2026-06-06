@@ -29,6 +29,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import coil.compose.rememberAsyncImagePainter
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 import com.neo.data.model.Post
 import com.neo.ui.theme.*
 import java.io.File
@@ -92,10 +94,8 @@ fun EnhancedPostCard(
         colors = CardDefaults.cardColors(containerColor = NeoGray900)
     ) {
         Column {
-            val imagePath = remember(post.imageHash) {
-                post.imageHash?.let {
-                    java.io.File(context.filesDir, "images/$it.jpg").takeIf { f -> f.exists() }
-                }
+            val imagePath = post.imageHash?.let {
+                java.io.File(context.filesDir, "images/$it.jpg").takeIf { f -> f.exists() }
             }
 
             Box {

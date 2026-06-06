@@ -335,6 +335,7 @@ fun EnhancedNeoNavigation(
             ) {
             BLEMeshStatusScreen(
                 connectedPeers = connectedPeers.ifEmpty { List(connectedPeersCount) { "Peer $it" } },
+                onForceSync = { viewModel.forceSyncNow() },
                 onBack = { navController.popBackStack() }
             )
         }

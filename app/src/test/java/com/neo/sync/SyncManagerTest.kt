@@ -2,8 +2,10 @@ package com.neo.sync
 
 import com.neo.bluetooth.BluetoothService
 import com.neo.bluetooth.Message
+import com.neo.data.dao.EventLogDao
 import com.neo.data.repository.DeviceRepository
 import com.neo.data.repository.PostRepository
+import com.neo.security.IdentityManager
 import io.mockk.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -26,6 +28,9 @@ class SyncManagerTest {
             postRepository = mockk(),
             deviceRepository = mockk(),
             gossipProtocol = gossipProtocol,
+            syncCoordinator = mockk(),
+            identityManager = mockk(),
+            eventLogDao = mockk(),
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         )
     }

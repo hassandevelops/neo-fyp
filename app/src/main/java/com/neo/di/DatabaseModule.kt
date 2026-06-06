@@ -4,6 +4,7 @@ import android.content.Context
 import com.neo.data.dao.BlockedUserDao
 import com.neo.data.dao.CommentDao
 import com.neo.data.dao.DeviceDao
+import com.neo.data.dao.EventLogDao
 import com.neo.data.dao.NotificationDao
 import com.neo.data.dao.PostDao
 import com.neo.data.dao.ReactionDao
@@ -64,5 +65,10 @@ object DatabaseModule {
     @Provides
     fun provideSavedPostDao(database: AppDatabase): SavedPostDao {
         return database.savedPostDao()
+    }
+
+    @Provides
+    fun provideEventLogDao(database: AppDatabase): EventLogDao {
+        return database.eventLogDao()
     }
 }

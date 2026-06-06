@@ -1,5 +1,6 @@
 package com.neo.domain.usecase
 
+import com.neo.data.dao.EventLogDao
 import com.neo.data.model.Post
 import com.neo.data.repository.PostRepository
 import com.neo.domain.port.IImageCompressor
@@ -7,6 +8,7 @@ import com.neo.domain.port.ISyncPort
 import com.neo.domain.port.CompressedImageResult
 import com.neo.media.ImageFileStore
 import com.neo.security.CryptoManager
+import com.neo.security.IdentityManager
 import com.neo.security.RateLimiter
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
@@ -14,15 +16,30 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import java.security.KeyPairGenerator
+import java.security.SecureRandom
 
 class CreatePostUseCaseTest {
 
     private val postRepository: PostRepository = mockk()
-    private val cryptoManager: CryptoManager = mockk(relaxed = true)
+    private val cryptoManager: CryptoManager = mockk()
     private val rateLimiter: RateLimiter = mockk()
     private val imageFileStore: ImageFileStore = mockk()
     private val imageCompressor: IImageCompressor = mockk()
     private val syncPort: ISyncPort = mockk()
+    private val identityManager: IdentityManager = mockk()
+    private val eventLogDao: com.neo.data.dao.EventLogDao = mockk(relaxed = true)
+
+    // Real RSA keypair for signing in tests (mockk relaxed PrivateKey doesn't work)
+    private val testKeyPair = KeyPairGenerator.getInstance("RSA").apply {
+        initialize(2048, SecureRandom())
+    }.generateKeyPair()
+    private val testIdentity = IdentityManager.Identity(
+        seed = ByteArray(32),
+        privateKey = testKeyPair.private,
+        publicKey = testKeyPair.public,
+        did = "did:key:testdevice"
+    )
 
     private lateinit var useCase: CreatePostUseCase
 
@@ -35,31 +52,40 @@ class CreatePostUseCaseTest {
             rateLimiter = rateLimiter,
             imageFileStore = imageFileStore,
             imageCompressor = imageCompressor,
-            syncPort = syncPort
+            syncPort = syncPort,
+            identityManager = identityManager,
+            eventLogDao = eventLogDao
         )
     }
 
     @Test
     fun `create post with valid content and author succeeds`() = runTest {
         val deviceId = "device-1"
-        val publicKey = "pubkey-base64"
-        val signature = "sig-base64"
-        coEvery { cryptoManager.getDeviceId() } returns deviceId
-        coEvery { rateLimiter.canCreatePost(deviceId) } returns true
-        coEvery { cryptoManager.getPublicKey() } returns publicKey
-        coEvery { cryptoManager.sign(any()) } returns signature
+        val expectedPubKey = java.util.Base64.getEncoder().encodeToString(testKeyPair.public.encoded)
+        every { cryptoManager.getDeviceId() } returns deviceId
+        every { rateLimiter.canCreatePost(deviceId) } returns true
         coEvery { postRepository.insertPost(any()) } returns true
         coEvery { syncPort.broadcastPost(any()) } just Runs
+        every { cryptoManager.createPostMessage(any(), any(), any(), any()) } returns "message"
+        every { cryptoManager.sign(any()) } returns "sig"
+        coEvery { identityManager.getOrCreateIdentity() } returns testIdentity
+        coEvery { eventLogDao.getLastSequenceNum(any()) } returns 0L
+        coEvery { eventLogDao.insertEvent(any()) } returns 1L
 
         val result = useCase("Test content", "Test Author")
 
+        result.exceptionOrNull()?.let { e ->
+            println("FAILURE: ${e.message}")
+            println("FAILURE_TYPE: ${e.javaClass.name}")
+            e.printStackTrace()
+        }
         assertTrue(result.isSuccess)
         val post = result.getOrNull()
         assertEquals("Test Author", post?.authorName)
         assertEquals("Test content", post?.content)
         assertEquals(deviceId, post?.authorId)
-        assertEquals(publicKey, post?.publicKey)
-        assertEquals(signature, post?.signature)
+        assertEquals(expectedPubKey, post?.publicKey)
+        assertNotNull(post?.signature)
         assertEquals(7, post?.ttl)
         coVerify { postRepository.insertPost(any()) }
         coVerify { syncPort.broadcastPost(any()) }
@@ -67,8 +93,8 @@ class CreatePostUseCaseTest {
 
     @Test
     fun `create post with blank content fails`() = runTest {
-        coEvery { cryptoManager.getDeviceId() } returns "device-1"
-        coEvery { rateLimiter.canCreatePost(any()) } returns true
+        every { cryptoManager.getDeviceId() } returns "device-1"
+        every { rateLimiter.canCreatePost(any()) } returns true
 
         val result = useCase("", "Author")
 
@@ -78,8 +104,8 @@ class CreatePostUseCaseTest {
 
     @Test
     fun `create post with blank author fails`() = runTest {
-        coEvery { cryptoManager.getDeviceId() } returns "device-1"
-        coEvery { rateLimiter.canCreatePost(any()) } returns true
+        every { cryptoManager.getDeviceId() } returns "device-1"
+        every { rateLimiter.canCreatePost(any()) } returns true
 
         val result = useCase("Content", "")
 
@@ -89,8 +115,8 @@ class CreatePostUseCaseTest {
 
     @Test
     fun `create post exceeding max length fails`() = runTest {
-        coEvery { cryptoManager.getDeviceId() } returns "device-1"
-        coEvery { rateLimiter.canCreatePost(any()) } returns true
+        every { cryptoManager.getDeviceId() } returns "device-1"
+        every { rateLimiter.canCreatePost(any()) } returns true
 
         val longContent = "A".repeat(CreatePostUseCase.MAX_CONTENT_LENGTH + 1)
         val result = useCase(longContent, "Author")
@@ -102,9 +128,9 @@ class CreatePostUseCaseTest {
     @Test
     fun `create post when rate limited fails`() = runTest {
         val deviceId = "device-1"
-        coEvery { cryptoManager.getDeviceId() } returns deviceId
-        coEvery { rateLimiter.canCreatePost(deviceId) } returns false
-        coEvery { rateLimiter.getTimeUntilNextPost(deviceId) } returns 120000L
+        every { cryptoManager.getDeviceId() } returns deviceId
+        every { rateLimiter.canCreatePost(deviceId) } returns false
+        every { rateLimiter.getTimeUntilNextPost(deviceId) } returns 120000L
 
         val result = useCase("Content", "Author")
 
@@ -117,14 +143,16 @@ class CreatePostUseCaseTest {
     @Test
     fun `create post with image compression success`() = runTest {
         val compressedResult = CompressedImageResult("hash-123", ByteArray(100), 100, 200, 200)
-        coEvery { cryptoManager.getDeviceId() } returns "device-1"
-        coEvery { rateLimiter.canCreatePost(any()) } returns true
-        coEvery { cryptoManager.getPublicKey() } returns "pubkey"
-        coEvery { cryptoManager.sign(any()) } returns "sig"
+        every { cryptoManager.getDeviceId() } returns "device-1"
+        every { rateLimiter.canCreatePost(any()) } returns true
+        every { cryptoManager.createPostMessage(any(), any(), any(), any()) } returns "message"
         coEvery { imageCompressor.compress("content://image.jpg") } returns compressedResult
         coEvery { imageFileStore.save(any(), any()) } returns "/path/to/image.jpg"
         coEvery { postRepository.insertPost(any()) } returns true
         coEvery { syncPort.broadcastPost(any()) } just Runs
+        coEvery { identityManager.getOrCreateIdentity() } returns testIdentity
+        coEvery { eventLogDao.getLastSequenceNum(any()) } returns 0L
+        coEvery { eventLogDao.insertEvent(any()) } returns 1L
 
         val result = useCase("Content", "Author", "content://image.jpg")
 
@@ -139,8 +167,8 @@ class CreatePostUseCaseTest {
 
     @Test
     fun `create post with image compression failure fails`() = runTest {
-        coEvery { cryptoManager.getDeviceId() } returns "device-1"
-        coEvery { rateLimiter.canCreatePost(any()) } returns true
+        every { cryptoManager.getDeviceId() } returns "device-1"
+        every { rateLimiter.canCreatePost(any()) } returns true
         coEvery { imageCompressor.compress(any()) } returns null
 
         val result = useCase("Content", "Author", "content://bad.jpg")
@@ -152,12 +180,14 @@ class CreatePostUseCaseTest {
 
     @Test
     fun `create post calls broadcast after insert`() = runTest {
-        coEvery { cryptoManager.getDeviceId() } returns "device-1"
-        coEvery { rateLimiter.canCreatePost(any()) } returns true
-        coEvery { cryptoManager.getPublicKey() } returns "pubkey"
-        coEvery { cryptoManager.sign(any()) } returns "sig"
+        every { cryptoManager.getDeviceId() } returns "device-1"
+        every { rateLimiter.canCreatePost(any()) } returns true
+        every { cryptoManager.createPostMessage(any(), any(), any(), any()) } returns "message"
         coEvery { postRepository.insertPost(any()) } returns true
         coEvery { syncPort.broadcastPost(any()) } just Runs
+        coEvery { identityManager.getOrCreateIdentity() } returns testIdentity
+        coEvery { eventLogDao.getLastSequenceNum(any()) } returns 0L
+        coEvery { eventLogDao.insertEvent(any()) } returns 1L
 
         val result = useCase("Content", "Author")
 
@@ -170,10 +200,9 @@ class CreatePostUseCaseTest {
 
     @Test
     fun `create post repository failure returns error`() = runTest {
-        coEvery { cryptoManager.getDeviceId() } returns "device-1"
-        coEvery { rateLimiter.canCreatePost(any()) } returns true
-        coEvery { cryptoManager.getPublicKey() } returns "pubkey"
-        coEvery { cryptoManager.sign(any()) } returns "sig"
+        every { cryptoManager.getDeviceId() } returns "device-1"
+        every { rateLimiter.canCreatePost(any()) } returns true
+        coEvery { identityManager.getOrCreateIdentity() } returns testIdentity
         coEvery { postRepository.insertPost(any()) } throws RuntimeException("DB error")
 
         val result = useCase("Content", "Author")
@@ -184,11 +213,13 @@ class CreatePostUseCaseTest {
     @Test
     fun `create post populates all fields correctly`() = runTest {
         val deviceId = "device-1"
-        coEvery { cryptoManager.getDeviceId() } returns deviceId
-        coEvery { rateLimiter.canCreatePost(any()) } returns true
-        coEvery { cryptoManager.getPublicKey() } returns "pubkey"
-        coEvery { cryptoManager.sign(any()) } returns "sig"
+        every { cryptoManager.getDeviceId() } returns deviceId
+        every { rateLimiter.canCreatePost(any()) } returns true
+        every { cryptoManager.createPostMessage(any(), any(), any(), any()) } returns "message"
         coEvery { syncPort.broadcastPost(any()) } just Runs
+        coEvery { identityManager.getOrCreateIdentity() } returns testIdentity
+        coEvery { eventLogDao.getLastSequenceNum(any()) } returns 0L
+        coEvery { eventLogDao.insertEvent(any()) } returns 1L
 
         val capturedPostSlot = slot<Post>()
         coEvery { postRepository.insertPost(capture(capturedPostSlot)) } returns true
@@ -209,17 +240,18 @@ class CreatePostUseCaseTest {
 
     @Test
     fun `create post uses crypto signature chain`() = runTest {
-        coEvery { cryptoManager.getDeviceId() } returns "device-1"
-        coEvery { rateLimiter.canCreatePost(any()) } returns true
-        coEvery { cryptoManager.getPublicKey() } returns "pubkey"
-        coEvery { cryptoManager.sign(any()) } returns "signed-message"
+        every { cryptoManager.getDeviceId() } returns "device-1"
+        every { rateLimiter.canCreatePost(any()) } returns true
+        every { cryptoManager.createPostMessage(any(), any(), any(), any()) } returns "message"
         coEvery { postRepository.insertPost(any()) } returns true
         coEvery { syncPort.broadcastPost(any()) } just Runs
+        coEvery { identityManager.getOrCreateIdentity() } returns testIdentity
+        coEvery { eventLogDao.getLastSequenceNum(any()) } returns 0L
+        coEvery { eventLogDao.insertEvent(any()) } returns 1L
 
         useCase("Content", "Author")
 
         coVerify { cryptoManager.getDeviceId() }
-        coVerify { cryptoManager.getPublicKey() }
-        coVerify { cryptoManager.sign(any()) }
+        coVerify { identityManager.getOrCreateIdentity() }
     }
 }

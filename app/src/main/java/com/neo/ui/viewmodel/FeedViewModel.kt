@@ -1,6 +1,8 @@
 package com.neo.ui.viewmodel
 
 import android.app.Application
+import android.net.wifi.p2p.WifiP2pDevice
+import android.net.wifi.p2p.WifiP2pInfo
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.PagingData
@@ -10,6 +12,7 @@ import com.neo.data.repository.NotificationRepository
 import com.neo.data.repository.SavedPostRepository
 import com.neo.domain.port.ISyncPort
 import com.neo.domain.usecase.GetFeedUseCase
+import com.neo.sync.SyncManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -29,6 +32,7 @@ class FeedViewModel @Inject constructor(
     application: Application,
     private val getFeedUseCase: GetFeedUseCase,
     private val syncPort: ISyncPort,
+    private val syncManager: SyncManager,
     private val notificationRepository: NotificationRepository,
     private val savedPostRepository: SavedPostRepository,
     private val userPreferences: UserPreferences,
@@ -75,6 +79,10 @@ class FeedViewModel @Inject constructor(
 
     val connectedPeersCount: StateFlow<Int> = syncPort.connectedPeersCount
     val connectedPeers: StateFlow<List<String>> = syncPort.connectedPeers
+
+    fun forceSyncNow() {
+        syncManager.forceSyncNow()
+    }
 
     val notificationCount: StateFlow<Int> = notificationRepository.getUnreadCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)

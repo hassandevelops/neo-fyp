@@ -25,7 +25,7 @@ class PostRepositoryTest {
     @Test
     fun `getAllPosts returns posts from DAO`() = runTest {
         val posts = listOf(
-            Post("1", "a1", "Alice", "Hello", null, null, null, null, 1000L, "sig", "pk", 7, 1000L)
+            Post("1", "a1", "Alice", "Hello", null, null, null, null, 1000L, "sig", "pk", ttl = 7, firstSeenTimestamp = 1000L)
         )
         coEvery { postDao.getAllPosts() } returns flowOf(posts)
 
@@ -36,7 +36,7 @@ class PostRepositoryTest {
 
     @Test
     fun `insertPost returns true on success`() = runTest {
-        val post = Post("1", "a1", "Alice", "Hello", null, null, null, null, 1000L, "sig", "pk", 7, 1000L)
+        val post = Post("1", "a1", "Alice", "Hello", null, null, null, null, 1000L, "sig", "pk", ttl = 7, firstSeenTimestamp = 1000L)
         coEvery { postDao.insert(post) } returns 1L
 
         val result = repository.insertPost(post)
@@ -46,7 +46,7 @@ class PostRepositoryTest {
 
     @Test
     fun `insertPost returns false on duplicate`() = runTest {
-        val post = Post("1", "a1", "Alice", "Hello", null, null, null, null, 1000L, "sig", "pk", 7, 1000L)
+        val post = Post("1", "a1", "Alice", "Hello", null, null, null, null, 1000L, "sig", "pk", ttl = 7, firstSeenTimestamp = 1000L)
         coEvery { postDao.insert(post) } returns -1L
 
         val result = repository.insertPost(post)
@@ -101,7 +101,7 @@ class PostRepositoryTest {
 
     @Test
     fun `updatePost delegates to DAO`() = runTest {
-        val post = Post("1", "a1", "Alice", "Updated", null, null, null, null, 1000L, "sig", "pk", 7, 1000L)
+        val post = Post("1", "a1", "Alice", "Updated", null, null, null, null, 1000L, "sig", "pk", ttl = 7, firstSeenTimestamp = 1000L)
         coEvery { postDao.update(post) } just Runs
 
         repository.updatePost(post)

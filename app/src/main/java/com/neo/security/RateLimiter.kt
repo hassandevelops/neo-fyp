@@ -245,7 +245,7 @@ class RateLimiter @Inject constructor() {
      */
     fun canAcceptInboundPost(authorId: String): Boolean {
         val now = System.currentTimeMillis()
-        val timestamps = inboundPostTimestamps.getOrPut(authorId) { mutableListOf() }
+        val timestamps = inboundPostTimestamps.getOrPut(authorId) { CopyOnWriteArrayList() }
 
         timestamps.removeAll { it < now - windowMs }
 
@@ -265,7 +265,7 @@ class RateLimiter @Inject constructor() {
      */
     fun canAcceptInboundComment(authorId: String): Boolean {
         val now = System.currentTimeMillis()
-        val timestamps = inboundCommentTimestamps.getOrPut(authorId) { mutableListOf() }
+        val timestamps = inboundCommentTimestamps.getOrPut(authorId) { CopyOnWriteArrayList() }
 
         timestamps.removeAll { it < now - windowMs }
 

@@ -3,6 +3,7 @@ package com.neo.security
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Base64
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import java.security.*
@@ -29,20 +30,26 @@ class CryptoManager(context: Context) {
     )
     
     companion object {
+        private const val TAG = "CryptoManager"
         private const val PREF_PRIVATE_KEY = "private_key"
         private const val PREF_PUBLIC_KEY = "public_key"
         private const val PREF_DEVICE_ID = "device_id"
         private const val PREF_KEY_ALGORITHM = "key_algorithm"
-        
-        // Try Ed25519 first, fallback to RSA if not available
-        private const val PREFERRED_ALGORITHM = "Ed25519"
-        private const val FALLBACK_ALGORITHM = "RSA"
+
+        // Force RSA everywhere — Ed25519 availability varies wildly across
+        // Android OEMs (present on Xiaomi, absent on Huawei). RSA is universal.
+        private const val KEY_ALGORITHM = "RSA"
         private const val RSA_KEY_SIZE = 2048
     }
     
     init {
-        // Generate keys on first launch
-        if (!hasKeys()) {
+        // Generate keys on first launch, OR if previous keys used a different algorithm.
+        // Always regenerate to ensure RSA is used for cross-OEM compatibility.
+        val existingAlgorithm = getKeyAlgorithm()
+        if (!hasKeys() || existingAlgorithm != KEY_ALGORITHM) {
+            if (existingAlgorithm != KEY_ALGORITHM && hasKeys()) {
+                Log.w(TAG, "Existing key is $existingAlgorithm — regenerating as $KEY_ALGORITHM for cross-device compatibility")
+            }
             generateAndStoreKeys()
         }
     }
@@ -59,8 +66,8 @@ class CryptoManager(context: Context) {
      * Get the algorithm being used for this device.
      */
     private fun getKeyAlgorithm(): String {
-        return sharedPreferences.getString(PREF_KEY_ALGORITHM, FALLBACK_ALGORITHM) 
-            ?: FALLBACK_ALGORITHM
+        return sharedPreferences.getString(PREF_KEY_ALGORITHM, KEY_ALGORITHM)
+            ?: KEY_ALGORITHM
     }
     
     /**
@@ -69,32 +76,21 @@ class CryptoManager(context: Context) {
      */
     private fun generateAndStoreKeys() {
         try {
-            // Try Ed25519 first
-            lateinit var keyPair: KeyPair
-            var algorithm = PREFERRED_ALGORITHM
-            
-            try {
-                val keyPairGenerator = KeyPairGenerator.getInstance(PREFERRED_ALGORITHM)
-                keyPair = keyPairGenerator.generateKeyPair()
-            } catch (e: Exception) {
-                // Ed25519 not available, use RSA
-                algorithm = FALLBACK_ALGORITHM
-                val keyPairGenerator = KeyPairGenerator.getInstance(FALLBACK_ALGORITHM)
-                keyPairGenerator.initialize(RSA_KEY_SIZE)
-                keyPair = keyPairGenerator.generateKeyPair()
-            }
-            
+            val keyPairGenerator = KeyPairGenerator.getInstance(KEY_ALGORITHM)
+            keyPairGenerator.initialize(RSA_KEY_SIZE)
+            val keyPair = keyPairGenerator.generateKeyPair()
+
             val privateKeyBytes = keyPair.private.encoded
             val publicKeyBytes = keyPair.public.encoded
-            
+
             val privateKeyBase64 = Base64.encodeToString(privateKeyBytes, Base64.NO_WRAP)
             val publicKeyBase64 = Base64.encodeToString(publicKeyBytes, Base64.NO_WRAP)
-            
+
             sharedPreferences.edit().apply {
                 putString(PREF_PRIVATE_KEY, privateKeyBase64)
                 putString(PREF_PUBLIC_KEY, publicKeyBase64)
                 putString(PREF_DEVICE_ID, UUID.randomUUID().toString())
-                putString(PREF_KEY_ALGORITHM, algorithm)
+                putString(PREF_KEY_ALGORITHM, KEY_ALGORITHM)
                 apply()
             }
         } catch (e: Exception) {
@@ -117,18 +113,27 @@ class CryptoManager(context: Context) {
         return sharedPreferences.getString(PREF_PUBLIC_KEY, null)
             ?: throw IllegalStateException("Public key not found")
     }
+
+    fun getPublicKeyString(): String = getPublicKey()
+
+    fun getKeyAlgorithmPublic(): String = getKeyAlgorithm()
     
+    private var cachedPrivateKey: PrivateKey? = null
+
     /**
      * Get the private key.
      */
     private fun getPrivateKey(): PrivateKey {
-        val privateKeyBase64 = sharedPreferences.getString(PREF_PRIVATE_KEY, null)
-            ?: throw IllegalStateException("Private key not found")
-        
-        val privateKeyBytes = Base64.decode(privateKeyBase64, Base64.NO_WRAP)
-        val keySpec = PKCS8EncodedKeySpec(privateKeyBytes)
-        val keyFactory = KeyFactory.getInstance(getKeyAlgorithm())
-        return keyFactory.generatePrivate(keySpec)
+        return cachedPrivateKey ?: run {
+            val privateKeyBase64 = sharedPreferences.getString(PREF_PRIVATE_KEY, null)
+                ?: throw IllegalStateException("Private key not found")
+            
+            val privateKeyBytes = Base64.decode(privateKeyBase64, Base64.NO_WRAP)
+            val keySpec = PKCS8EncodedKeySpec(privateKeyBytes)
+            val key = KeyFactory.getInstance(getKeyAlgorithm()).generatePrivate(keySpec)
+            cachedPrivateKey = key
+            key
+        }
     }
     
     /**
@@ -137,10 +142,7 @@ class CryptoManager(context: Context) {
     fun sign(message: String): String {
         try {
             val privateKey = getPrivateKey()
-            val algorithm = getKeyAlgorithm()
-            val signatureAlgorithm = if (algorithm == "Ed25519") "Ed25519" else "SHA256withRSA"
-            
-            val signature = Signature.getInstance(signatureAlgorithm)
+            val signature = Signature.getInstance("SHA256withRSA")
             signature.initSign(privateKey)
             signature.update(message.toByteArray())
             val signatureBytes = signature.sign()
@@ -152,34 +154,34 @@ class CryptoManager(context: Context) {
     
     /**
      * Verify a signature using the provided public key.
+     * @param keyAlgorithm The algorithm used by the signer ("Ed25519" or "RSA").
+     *                     This MUST come from the message itself, not guessed locally,
+     *                     because different Android OEMs have incompatible Ed25519 implementations.
      */
-    fun verify(message: String, signatureBase64: String, publicKeyBase64: String): Boolean {
+    fun verify(message: String, signatureBase64: String, publicKeyBase64: String, keyAlgorithm: String = KEY_ALGORITHM): Boolean {
         return try {
             val publicKeyBytes = Base64.decode(publicKeyBase64, Base64.NO_WRAP)
             val keySpec = X509EncodedKeySpec(publicKeyBytes)
-            
-            // Try both algorithms for compatibility
-            var publicKey: PublicKey? = null
-            var signatureAlgorithm: String? = null
-            
-            try {
-                val keyFactory = KeyFactory.getInstance("Ed25519")
-                publicKey = keyFactory.generatePublic(keySpec)
-                signatureAlgorithm = "Ed25519"
-            } catch (e: Exception) {
-                val keyFactory = KeyFactory.getInstance("RSA")
-                publicKey = keyFactory.generatePublic(keySpec)
-                signatureAlgorithm = "SHA256withRSA"
-            }
-            
+
+            val keyFactory = KeyFactory.getInstance(keyAlgorithm)
+            val publicKey = keyFactory.generatePublic(keySpec)
+            val signatureAlgorithm = if (keyAlgorithm == "Ed25519") "Ed25519" else "SHA256withRSA"
+
             val signatureBytes = Base64.decode(signatureBase64, Base64.NO_WRAP)
-            
+
             val signature = Signature.getInstance(signatureAlgorithm)
             signature.initVerify(publicKey)
             signature.update(message.toByteArray())
-            signature.verify(signatureBytes)
+            val result = signature.verify(signatureBytes)
+            if (!result) {
+                Log.e(TAG, "Signature verification FAILED — algorithm=$keyAlgorithm, message=${message.take(80)}, pubKey=${publicKeyBase64.take(40)}..., sig=${signatureBase64.take(40)}...")
+            } else {
+                Log.d(TAG, "Signature verification OK — algorithm=$keyAlgorithm")
+            }
+            result
         } catch (e: Exception) {
-            false // Invalid signature or key
+            Log.e(TAG, "Signature verification error: ${e.message} (algorithm=$keyAlgorithm, pubKey=${publicKeyBase64.take(40)}...)", e)
+            false
         }
     }
     

@@ -1,10 +1,12 @@
 package com.neo.sync
 
+import android.util.Log
 import com.neo.di.ApplicationScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -23,7 +25,13 @@ class SeenMessageCache @Inject constructor(
         private const val MESSAGE_TTL_MS = 86400000L // 24 hours
     }
 
-    private val seenMessages = ConcurrentHashMap<String, Long>()
+    private val seenMessages = Collections.synchronizedMap(
+        object : LinkedHashMap<String, Long>(1024, 0.75f, true) {
+            override fun removeEldestEntry(eldest: Map.Entry<String, Long>): Boolean {
+                return size > 10_000
+            }
+        }
+    )
     private var cleanupJob: Job? = null
 
     init {
@@ -67,7 +75,9 @@ class SeenMessageCache @Inject constructor(
     fun checkAndAdd(messageId: String): Boolean {
         val now = System.currentTimeMillis()
         val previous = seenMessages.putIfAbsent(messageId, now)
-        return previous == null
+        val isNew = previous == null
+        if (!isNew) Log.w(TAG, "Dropping duplicate message: $messageId")
+        return isNew
     }
 
     /**

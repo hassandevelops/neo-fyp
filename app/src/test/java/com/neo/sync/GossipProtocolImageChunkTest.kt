@@ -11,10 +11,7 @@ import com.neo.media.ImageChunker
 import com.neo.media.ImageFileStore
 import com.neo.security.CryptoManager
 import com.neo.security.RateLimiter
-import io.mockk.coEvery
-import io.mockk.every
-import io.mockk.mockk
-import io.mockk.verify
+import io.mockk.*
 import java.security.MessageDigest
 import java.util.Base64
 import kotlinx.coroutines.CoroutineScope
@@ -59,6 +56,7 @@ class GossipProtocolImageChunkTest {
         val imageHash = sha256(imageBytes)
         val chunk = singleChunkMessage(imageBytes)
         coEvery { postRepository.getPostById("post-1") } returns postWithImageHash(imageHash)
+        coEvery { postRepository.updatePost(any()) } just Runs
         every { imageFileStore.save(imageHash, imageBytes) } returns "/tmp/$imageHash.jpg"
 
         gossipProtocol.handleImageChunk(chunk, "peer-1")

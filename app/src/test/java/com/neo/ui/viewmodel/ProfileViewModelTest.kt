@@ -45,7 +45,7 @@ class ProfileViewModelTest {
         every { syncPort.connectedPeersCount } returns MutableStateFlow(0)
         every { savedPostRepository.observeSavedPostIds() } returns MutableStateFlow(emptySet())
 
-        viewModel = ProfileViewModel(userPreferences, cryptoManager, postRepository, savedPostRepository, syncPort)
+        viewModel = ProfileViewModel(RuntimeEnvironment.getApplication(), userPreferences, cryptoManager, postRepository, savedPostRepository, syncPort)
     }
 
     @After
@@ -138,7 +138,7 @@ class ProfileViewModelTest {
         every { failingPrefs.userBio } returns "Bio"
         every { failingPrefs.userName = any() } throws RuntimeException("Save failed")
 
-        val vm = ProfileViewModel(failingPrefs, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
+        val vm = ProfileViewModel(RuntimeEnvironment.getApplication(), failingPrefs, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
         vm.updateProfile("Name", "Bio")
         advanceUntilIdle()
 

@@ -14,23 +14,18 @@ object MessageProtocol {
 
     private const val TAG = "MessageProtocol"
 
-    private val json = Json {
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-        prettyPrint = false
-    }
-
     private val messageSerializersModule = SerializersModule {
         polymorphic(Message::class) {
             subclass(Message.Handshake::class)
             subclass(Message.PostBroadcast::class)
-            subclass(Message.SyncRequest::class)
-            subclass(Message.SyncResponse::class)
+            subclass(Message.EventSyncRequest::class)
+            subclass(Message.EventSyncResponse::class)
             subclass(Message.Ack::class)
             subclass(Message.ImageMetadata::class)
             subclass(Message.ImageChunk::class)
             subclass(Message.CommentBroadcast::class)
             subclass(Message.ReactionBroadcast::class)
+            subclass(Message.PeerExchange::class)
         }
     }
 

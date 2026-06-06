@@ -33,29 +33,39 @@ sealed class Message {
         val timestamp: Long,
         val signature: String,
         val publicKey: String,
+        val keyAlgorithm: String = "RSA",
         val ttl: Int,
         val imageHash: String? = null,
         val imageSize: Int? = null,
         val imageWidth: Int? = null,
-        val imageHeight: Int? = null
+        val imageHeight: Int? = null,
+        val imageData: String? = null,
+        val eventId: String = "",
+        val authorDid: String = "",
+        val sequenceNum: Long = 0L,
+        val eventType: String = "CREATE_POST",
+        val eventSignature: String = "",
+        val eventPayload: String = "{}"
     ) : Message()
 
     /**
-     * Request posts newer than a specific timestamp.
+     * Request all events newer than a specific timestamp.
      */
     @Serializable
-    @SerialName("sync_request")
-    data class SyncRequest(
-        val lastTimestamp: Long
+    @SerialName("event_sync_request")
+    data class EventSyncRequest(
+        val requesterDid: String,
+        val lastKnownTimestamp: Long
     ) : Message()
 
     /**
-     * Response to sync request with list of posts.
+     * Response to event sync request with list of event logs.
      */
     @Serializable
-    @SerialName("sync_response")
-    data class SyncResponse(
-        val posts: List<PostBroadcast>
+    @SerialName("event_sync_response")
+    data class EventSyncResponse(
+        val authorDid: String,
+        val events: List<EventLogDto>
     ) : Message()
 
     /**
@@ -113,6 +123,7 @@ sealed class Message {
         val timestamp: Long,
         val signature: String,
         val publicKey: String,
+        val keyAlgorithm: String = "RSA",
         val ttl: Int
     ) : Message()
 
@@ -127,6 +138,18 @@ sealed class Message {
         val timestamp: Long,
         val signature: String,
         val publicKey: String,
+        val keyAlgorithm: String = "RSA",
         val ttl: Int
+    ) : Message()
+
+    /**
+     * Peer exchange message — shares known peer multiaddresses for WAN discovery.
+     * Sent automatically after handshake to propagate the address book through the mesh.
+     */
+    @Serializable
+    @SerialName("peer_exchange")
+    data class PeerExchange(
+        val senderPeerId: String,
+        val addresses: List<String>     // Multiaddr strings
     ) : Message()
 }

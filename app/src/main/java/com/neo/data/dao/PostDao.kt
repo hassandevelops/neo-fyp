@@ -27,16 +27,19 @@ interface PostDao {
      * Get all posts ordered by timestamp (newest first).
      * Returns a Flow for reactive updates.
      */
-    @Query("SELECT * FROM posts ORDER BY timestamp DESC")
+    @Query("SELECT * FROM posts WHERE isDeleted = 0 ORDER BY timestamp DESC")
     fun getAllPosts(): Flow<List<Post>>
 
-    @Query("SELECT * FROM posts WHERE authorId = :authorId ORDER BY timestamp DESC")
+    @Query("SELECT * FROM posts WHERE authorId = :authorId AND isDeleted = 0 ORDER BY timestamp DESC")
     fun getPostsByAuthor(authorId: String): Flow<List<Post>>
+
+    @Query("SELECT * FROM posts WHERE authorId = :authorId AND isDeleted = 0 ORDER BY timestamp DESC")
+    suspend fun getPostsByAuthorList(authorId: String): List<Post>
 
     /**
      * Get all posts once for export and maintenance tasks.
      */
-    @Query("SELECT * FROM posts ORDER BY timestamp DESC")
+    @Query("SELECT * FROM posts WHERE isDeleted = 0 ORDER BY timestamp DESC")
     suspend fun getAllPostsList(): List<Post>
 
     /**
@@ -49,7 +52,7 @@ interface PostDao {
      * Get paginated posts for infinite scrolling feed.
      * Returns posts ordered by timestamp (newest first).
      */
-    @Query("SELECT * FROM posts ORDER BY timestamp DESC")
+    @Query("SELECT * FROM posts WHERE isDeleted = 0 ORDER BY timestamp DESC")
     fun getPostsPaged(): PagingSource<Int, Post>
 
     /**
@@ -57,21 +60,21 @@ interface PostDao {
      * @param limit Maximum number of posts to return
      * @param offset Number of posts to skip
      */
-    @Query("SELECT * FROM posts ORDER BY timestamp DESC LIMIT :limit OFFSET :offset")
+    @Query("SELECT * FROM posts WHERE isDeleted = 0 ORDER BY timestamp DESC LIMIT :limit OFFSET :offset")
     suspend fun getPostsPaginated(limit: Int, offset: Int): List<Post>
     
     /**
      * Get posts created after a specific timestamp, using the author's clock.
      * Kept for reference / legacy usage. For sync, prefer getPostsAfterLocalTime.
      */
-    @Query("SELECT * FROM posts WHERE timestamp > :afterTimestamp ORDER BY timestamp ASC")
+    @Query("SELECT * FROM posts WHERE timestamp > :afterTimestamp AND isDeleted = 0 ORDER BY timestamp ASC")
     suspend fun getPostsAfter(afterTimestamp: Long): List<Post>
 
     /**
      * Get posts first received after a specific timestamp (local clock).
      * Used for sync operations to avoid clock skew issues.
      */
-    @Query("SELECT * FROM posts WHERE firstSeenTimestamp > :afterTimestamp ORDER BY firstSeenTimestamp ASC LIMIT 200")
+    @Query("SELECT * FROM posts WHERE firstSeenTimestamp > :afterTimestamp AND isDeleted = 0 ORDER BY firstSeenTimestamp ASC LIMIT 200")
     suspend fun getPostsAfterLocalTime(afterTimestamp: Long): List<Post>
     
     /**
@@ -121,13 +124,28 @@ interface PostDao {
     @Update
     suspend fun update(post: Post)
 
+    /**
+     * Insert or replace a post (used by SyncCoordinator for materialized views).
+     */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOrUpdatePost(post: Post)
+
+    /**
+     * Mark a post as deleted (CRDT tombstone).
+     */
+    @Query("UPDATE posts SET isDeleted = 1 WHERE id = :postId")
+    suspend fun markPostAsDeleted(postId: String)
+
+    @Query("SELECT * FROM posts WHERE authorId IN (:authorIds) AND isDeleted = 0 ORDER BY timestamp DESC")
+    suspend fun getPostsByAuthorIds(authorIds: List<String>): List<Post>
+
     @Query("""
         SELECT p.id AS postId,
             (SELECT COUNT(*) FROM comments c WHERE c.postId = p.id) AS commentCount,
             (SELECT COUNT(*) FROM reactions r WHERE r.postId = p.id AND r.type = 'LIKE') AS likeCount,
             EXISTS(SELECT 1 FROM reactions r2 WHERE r2.postId = p.id AND r2.userId = :userId AND r2.type = 'LIKE') AS hasLiked
         FROM posts p
-        WHERE p.id IN (:postIds)
+        WHERE p.id IN (:postIds) AND p.isDeleted = 0
     """)
     fun getBatchStats(postIds: List<String>, userId: String): Flow<List<PostStatsEntry>>
 }
