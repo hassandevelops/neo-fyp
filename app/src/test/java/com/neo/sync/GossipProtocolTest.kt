@@ -6,6 +6,7 @@ import com.neo.data.model.BlockedUser
 import com.neo.data.model.Post
 import com.neo.data.model.Comment
 import com.neo.data.model.Reaction
+import com.neo.data.dao.EventLogDao
 import com.neo.data.repository.BlockedUserRepository
 import com.neo.data.repository.CommentRepository
 import com.neo.data.repository.DeviceRepository
@@ -44,6 +45,7 @@ class GossipProtocolTest {
     private lateinit var seenMessageCache: SeenMessageCache
     private lateinit var rateLimiter: RateLimiter
     private lateinit var imageFileStore: ImageFileStore
+    private lateinit var eventLogDao: EventLogDao
     private lateinit var gossipProtocol: GossipProtocol
 
     @Before
@@ -59,6 +61,7 @@ class GossipProtocolTest {
         seenMessageCache = mockk()
         rateLimiter = mockk()
         imageFileStore = mockk(relaxed = true)
+        eventLogDao = mockk(relaxed = true)
 
         every { conflictResolver.isConflict(any(), any()) } returns false
 
@@ -74,6 +77,7 @@ class GossipProtocolTest {
             seenMessageCache = seenMessageCache,
             rateLimiter = rateLimiter,
             imageFileStore = imageFileStore,
+            eventLogDao = eventLogDao,
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         )
     }

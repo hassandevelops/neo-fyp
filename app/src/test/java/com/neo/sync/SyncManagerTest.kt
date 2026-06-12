@@ -5,6 +5,7 @@ import com.neo.bluetooth.Message
 import com.neo.data.dao.EventLogDao
 import com.neo.data.repository.DeviceRepository
 import com.neo.data.repository.PostRepository
+import com.neo.security.CryptoManager
 import com.neo.security.IdentityManager
 import io.mockk.*
 import kotlinx.coroutines.*
@@ -30,6 +31,7 @@ class SyncManagerTest {
             gossipProtocol = gossipProtocol,
             syncCoordinator = mockk(),
             identityManager = mockk(),
+            cryptoManager = mockk(),
             eventLogDao = mockk(),
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         )

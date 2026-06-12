@@ -2,6 +2,7 @@ package com.neo.sync
 
 import com.neo.bluetooth.Message
 import com.neo.data.model.Post
+import com.neo.data.dao.EventLogDao
 import com.neo.data.repository.BlockedUserRepository
 import com.neo.data.repository.CommentRepository
 import com.neo.data.repository.DeviceRepository
@@ -46,6 +47,7 @@ class GossipProtocolImageChunkTest {
             seenMessageCache = mockk<SeenMessageCache>(relaxed = true),
             rateLimiter = mockk<RateLimiter>(relaxed = true),
             imageFileStore = imageFileStore,
+            eventLogDao = mockk<EventLogDao>(relaxed = true),
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         )
     }

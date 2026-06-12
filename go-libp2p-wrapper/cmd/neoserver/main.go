@@ -19,11 +19,13 @@ import (
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	"github.com/libp2p/go-libp2p/p2p/host/eventbus"
 	"github.com/libp2p/go-libp2p/p2p/host/routed"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 
@@ -68,7 +70,14 @@ type Event struct {
 //   2. Env: NEO_BOOTSTRAP - comma-separated multiaddrs
 //   3. Fallback: hardcoded default
 var defaultBootstrapPeers = []string{
+	// Custom bootstrap server (LAN/intranet)
 	"/ip4/192.168.100.180/tcp/4001/p2p/12D3KooWRr67qtQrb3aHNkjQM2fABs1QbJwLwzmNzAkWp1W8MFoh",
+	// Public IPFS DHT bootstrap peers for cross-network discovery via global DHT
+	"/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+	"/ip4/104.236.179.241/tcp/4001/p2p/QmSoLPppuBtQSGwKDZT2M73ULpjvfd3aZ6ha4oFGL1KrGM",
+	"/ip4/128.199.219.111/tcp/4001/p2p/QmSoLSafTMBsPKadTEgaXctDQVcqN88CNLHXMkTNwMKPnu",
+	"/ip4/104.236.76.40/tcp/4001/p2p/QmSoLV4Bbm51jM9C4gDYZQ9Cy3U6aXMJDAbzgu2fzaDs64",
+	"/ip4/178.62.158.247/tcp/4001/p2p/QmSoLer265NRgSp2LA3dPaeykiS1J6DifTC88f5uVQKNAd",
 }
 
 var bootstrapPeers = loadBootstrapPeers()
@@ -111,19 +120,25 @@ func loadBootstrapPeers() []string {
 // getBootstrapRelayIP extracts the IP from the first bootstrap peer multiaddr
 // for use in p2p-circuit relay addresses
 func getBootstrapRelayIP() string {
-	if len(bootstrapPeers) == 0 {
-		return "127.0.0.1"
+	// Use the first CUSTOM bootstrap peer's IP for relay address construction.
+	// For public (DNS) bootstrap peers, fall back to the node's own outbound IP.
+	for _, s := range bootstrapPeers {
+		if !strings.HasPrefix(s, "/dns") {
+			addr, err := ma.NewMultiaddr(s)
+			if err != nil {
+				continue
+			}
+			host, _ := ma.SplitFirst(addr)
+			if host != nil {
+				return host.Value()
+			}
+		}
 	}
-	addr, err := ma.NewMultiaddr(bootstrapPeers[0])
-	if err != nil {
-		return "127.0.0.1"
+	// Fall back to node's detected IP
+	if ip := getOutboundIP(); ip != "" {
+		return ip
 	}
-	host, _ := ma.SplitFirst(addr)
-	if host == nil {
-		return "127.0.0.1"
-	}
-	_ = host // suppress unused warning
-	return host.Value()
+	return "127.0.0.1"
 }
 
 // -------- libp2p node wrapper --------
@@ -137,8 +152,12 @@ type Libp2pNode struct {
 	eventWriter   func(Event)
 	activeStreams map[string]network.Stream
 	lock          sync.RWMutex
-	bootPeerIDs   []peer.ID
+	bootPeerIDs   []peer.ID   // all connected bootstrap peers (both public and custom)
+	customBootIDs []peer.ID   // subset that support /neo/px/1.0.0 and /neo/proxy/1.0.0
+	customBootMu  sync.Mutex // guards customBootIDs
 	mdnsService   mdns.Service
+	pxMu          sync.Mutex
+	peerAddrs     map[peer.ID][]string
 }
 
 // sendEvent writes a JSON event to the Kotlin app via TCP
@@ -171,40 +190,50 @@ func (n *Libp2pNode) HandlePeerFound(pi peer.AddrInfo) {
 }
 
 func (n *Libp2pNode) handleProxyStream(s network.Stream) {
-	peerID := s.Conn().RemotePeer().String()
-	defer s.Close()
-	defer func() {
-		n.lock.Lock()
-		delete(n.activeStreams, peerID)
-		n.lock.Unlock()
-		n.sendEvent(Event{Event: "peer_disconnected", PeerID: peerID})
+	log.Printf("proxy: handler entered, remote=%s", s.Conn().RemotePeer())
+	var msg map[string]interface{}
+	if err := json.NewDecoder(s).Decode(&msg); err != nil {
+		log.Printf("proxy: decode error: %v", err)
+		s.Close()
+		return
+	}
+	targetStr, ok := msg["target"].(string)
+	if !ok {
+		log.Printf("proxy: missing target")
+		s.Close()
+		return
+	}
+	target, err := peer.Decode(targetStr)
+	if err != nil {
+		log.Printf("proxy: invalid target: %v", err)
+		s.Close()
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
+	log.Printf("proxy: dialing target=%s", target)
+	targetStream, err := n.host.NewStream(ctx, target, protocol.ID("/neo/proxy/1.0.0"))
+	cancel()
+	if err != nil {
+		log.Printf("proxy: dial target %s: %v", target, err)
+		s.Close()
+		return
+	}
+	log.Printf("proxy: connected to target %s, starting relay", target)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		io.Copy(targetStream, s)
 	}()
-
-	n.lock.Lock()
-	if existing, exists := n.activeStreams[peerID]; exists && existing != s {
-		// New connection from same peer - close old one
-		existing.Close()
-	}
-	n.activeStreams[peerID] = s
-	n.lock.Unlock()
-
-	n.sendEvent(Event{Event: "peer_connected", PeerID: peerID})
-
-	reader := bufio.NewReader(s)
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			if err != io.EOF {
-				log.Printf("proxy read error from %s: %v", peerID, err)
-			}
-			break
-		}
-		line = strings.TrimSuffix(line, "\n")
-		if len(line) == 0 {
-			continue
-		}
-		n.sendEvent(Event{Event: "message", PeerID: peerID, Message: line})
-	}
+	go func() {
+		defer wg.Done()
+		io.Copy(s, targetStream)
+	}()
+	wg.Wait()
+	s.Close()
+	targetStream.Close()
 }
 
 func (n *Libp2pNode) sendMessage(peerID string, message string) error {
@@ -279,8 +308,8 @@ func (n *Libp2pNode) handlePeerExchange(s network.Stream) {
 	}
 	var addrs []string
 	for _, a := range addrsInterface {
-		if s, ok := a.(string); ok {
-			addrs = append(addrs, s)
+		if addrStr, ok := a.(string); ok {
+			addrs = append(addrs, addrStr)
 		}
 	}
 	pid, err := peer.Decode(peerIDStr)
@@ -292,17 +321,51 @@ func (n *Libp2pNode) handlePeerExchange(s network.Stream) {
 		return
 	}
 	log.Printf("px: received announcement for %s with %d addrs", pid, len(addrs))
+
+	// Store and relay to all other connected peers
+	n.pxMu.Lock()
+	n.peerAddrs[pid] = addrs
+	for otherPid := range n.peerAddrs {
+		if otherPid == pid {
+			continue
+		}
+		go func(target peer.ID) {
+			ctx, cancel := context.WithTimeout(n.ctx, 5*time.Second)
+			defer cancel()
+			pxStream, err := n.host.NewStream(ctx, target, protocol.ID("/neo/px/1.0.0"))
+			if err != nil {
+				return
+			}
+			defer pxStream.Close()
+			relayAddrs := make([]string, len(addrs))
+			copy(relayAddrs, addrs)
+			relayAddr := fmt.Sprintf("/p2p-circuit/p2p/%s", pid.String())
+			relayAddrs = append(relayAddrs, relayAddr)
+			relayAnn := map[string]interface{}{
+				"peer_id": pid.String(),
+				"addrs":   relayAddrs,
+			}
+			if err := json.NewEncoder(pxStream).Encode(relayAnn); err != nil {
+				log.Printf("px: relay encode to %s: %v", target, err)
+				return
+			}
+			log.Printf("px: relayed %s to %s with relay addr", pid, target)
+		}(otherPid)
+	}
+	n.pxMu.Unlock()
+
+	// Also attempt direct connection
 	var filtered []ma.Multiaddr
 	for _, a := range addrs {
-		ma, err := ma.NewMultiaddr(a)
+		maddr, err := ma.NewMultiaddr(a)
 		if err != nil {
 			continue
 		}
-		s := ma.String()
+		s := maddr.String()
 		if strings.Contains(s, "/ip4/127.0.0.1") || strings.Contains(s, "/ip6/::1") {
 			continue
 		}
-		filtered = append(filtered, ma)
+		filtered = append(filtered, maddr)
 	}
 	if len(filtered) == 0 {
 		log.Printf("px: no non-loopback addrs for %s", pid)
@@ -432,7 +495,14 @@ func newNode(ctx context.Context, privKeyBytes []byte, port int) (*Libp2pNode, e
 		libp2p.DefaultTransports,
 		libp2p.DefaultMuxers,
 		libp2p.DefaultSecurity,
+		libp2p.EnableRelay(),
 		libp2p.EnableHolePunching(),
+		libp2p.EnableAutoRelayWithStaticRelays([]peer.AddrInfo{
+			{ID: peer.ID("QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ"), Addrs: []ma.Multiaddr{ma.StringCast("/ip4/104.131.131.82/tcp/4001")}},
+			{ID: peer.ID("QmSoLPppuBtQSGwKDZT2M73ULpjvfd3aZ6ha4oFGL1KrGM"), Addrs: []ma.Multiaddr{ma.StringCast("/ip4/104.236.179.241/tcp/4001")}},
+			{ID: peer.ID("QmSoLSafTMBsPKadTEgaXctDQVcqN88CNLHXMkTNwMKPnu"), Addrs: []ma.Multiaddr{ma.StringCast("/ip4/128.199.219.111/tcp/4001")}},
+		}),
+		libp2p.NATPortMap(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("new host: %w", err)
@@ -446,7 +516,6 @@ func newNode(ctx context.Context, privKeyBytes []byte, port int) (*Libp2pNode, e
 		dht.Datastore(dstore),
 		dht.BootstrapPeers(bootInfos...),
 		dht.Mode(dht.ModeServer),
-		dht.DisableAutoRefresh(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("new dht: %w", err)
@@ -459,14 +528,54 @@ func newNode(ctx context.Context, privKeyBytes []byte, port int) (*Libp2pNode, e
 		dht:           kdht,
 		ctx:           ctx,
 		port:          port,
-		activeStreams: make(map[string]network.Stream),
-		bootPeerIDs:   make([]peer.ID, 0),
+		activeStreams:  make(map[string]network.Stream),
+		bootPeerIDs:    make([]peer.ID, 0),
+		customBootIDs:  make([]peer.ID, 0),
+		peerAddrs:      make(map[peer.ID][]string),
 	}
 
 	// Register stream handlers BEFORE connecting to bootstrap
 	routedHost.SetStreamHandler(protocol.ID(NeoProtocolID), node.handleStream)
 	routedHost.SetStreamHandler(protocol.ID("/neo/px/1.0.0"), node.handlePeerExchange)
 	routedHost.SetStreamHandler(protocol.ID("/neo/proxy/1.0.0"), node.handleProxyStream)
+
+	// NotifyBundle: record remote connection addresses for NAT recall
+	routedHost.Network().Notify(&network.NotifyBundle{
+		ConnectedF: func(_ network.Network, c network.Conn) {
+			remotePID := c.RemotePeer()
+			remoteAddr := c.RemoteMultiaddr()
+			routedHost.Peerstore().AddAddr(remotePID, remoteAddr, 24*time.Hour)
+			log.Printf("notifiee: peer=%s connected from %s", remotePID, remoteAddr)
+		},
+		DisconnectedF: func(_ network.Network, c network.Conn) {
+			log.Printf("notifiee: peer=%s disconnected", c.RemotePeer())
+		},
+	})
+
+	// Event subscription: add every new peer to DHT routing table
+	sub, err := routedHost.EventBus().Subscribe(&event.EvtPeerConnectednessChanged{}, eventbus.BufSize(256))
+	if err != nil {
+		log.Printf("subscribe: %v", err)
+	} else {
+		go func() {
+			defer sub.Close()
+			for evt := range sub.Out() {
+				connEvt, ok := evt.(event.EvtPeerConnectednessChanged)
+				if !ok {
+					continue
+				}
+				if connEvt.Connectedness == network.Connected {
+					time.Sleep(2 * time.Second)
+					pid := connEvt.Peer
+					found := kdht.RoutingTable().Find(pid) == pid
+					if !found {
+						added, err := kdht.RoutingTable().TryAddPeer(pid, true, true)
+						log.Printf("TryAddPeer from event: added=%v err=%v rt_size=%d", added, err, kdht.RoutingTable().Size())
+					}
+				}
+			}
+		}()
+	}
 
 	// mDNS for LAN discovery
 	// NOTE: zeroconf uses netlink syscalls to enumerate network interfaces.
@@ -492,26 +601,30 @@ func newNode(ctx context.Context, privKeyBytes []byte, port int) (*Libp2pNode, e
 				log.Printf("bootstrap %s: %v", pi.ID, err)
 			} else {
 				log.Printf("connected to bootstrap %s", pi.ID)
-				// Store bootstrap peer ID for later use (proxy connections)
+				// Store bootstrap peer ID for later use
 				node.bootPeerIDs = append(node.bootPeerIDs, pi.ID)
 				// Add to DHT routing table so Bootstrap can use them
 				added, err := kdht.RoutingTable().TryAddPeer(pi.ID, true, true)
 				log.Printf("TryAddPeer: added=%v, err=%v, rt_size=%d", added, err, kdht.RoutingTable().Size())
-				// Announce our addresses to bootstrap for peer exchange
-				go func() {
+				// Probe for custom protocol support and announce addresses
+				go func(pid peer.ID) {
 					annCtx, annCancel := context.WithTimeout(ctx, 10*time.Second)
 					defer annCancel()
-					s, err := routedHost.NewStream(annCtx, pi.ID, protocol.ID("/neo/px/1.0.0"))
+					s, err := routedHost.NewStream(annCtx, pid, protocol.ID("/neo/px/1.0.0"))
 					if err != nil {
-						log.Printf("px: open stream: %v", err)
+						log.Printf("px: open stream to %s: %v (public DHT peer)", pid, err)
 						return
 					}
+					// This bootstrap supports our custom protocols
+					node.customBootMu.Lock()
+					node.customBootIDs = append(node.customBootIDs, pid)
+					node.customBootMu.Unlock()
 					defer s.Close()
 					var addrs []string
 					for _, a := range basicHost.Addrs() {
 						addrs = append(addrs, a.String())
 					}
-					// Add OUR relay address for others to reach us via bootstrap
+					// Add relay address for peers to reach us through this bootstrap
 					relayIP := getBootstrapRelayIP()
 					relayAddr := fmt.Sprintf("/ip4/%s/tcp/4001/p2p-circuit/p2p/%s", relayIP, basicHost.ID().String())
 					addrs = append(addrs, relayAddr)
@@ -523,8 +636,8 @@ func newNode(ctx context.Context, privKeyBytes []byte, port int) (*Libp2pNode, e
 						log.Printf("px: encode: %v", err)
 						return
 					}
-					log.Printf("px: announced %d addrs to bootstrap (including relay)", len(addrs))
-				}()
+					log.Printf("px: announced %d addrs to custom bootstrap %s (including relay)", len(addrs), pid)
+				}(pi.ID)
 			}
 		}
 		bootCancel()
@@ -584,7 +697,7 @@ func newNode(ctx context.Context, privKeyBytes []byte, port int) (*Libp2pNode, e
 }
 
 func neoDiscoveryCID() cid.Cid {
-	h, err := multihash.Sum([]byte("neo-discovery-v1"), multihash.SHA2_256, -1)
+	h, err := multihash.Sum([]byte("neo-social-app-discovery-v1-2026-06-12"), multihash.SHA2_256, -1)
 	if err != nil {
 		panic(err)
 	}
@@ -621,23 +734,29 @@ func (n *Libp2pNode) discoveryLoop() {
 	go func() {
 		for {
 			time.Sleep(30 * time.Second)
-			bootInfos := parseBootstrapPeers()
-			for _, pi := range bootInfos {
+			n.customBootMu.Lock()
+			ids := make([]peer.ID, len(n.customBootIDs))
+			copy(ids, n.customBootIDs)
+			n.customBootMu.Unlock()
+			for _, pid := range ids {
+				if n.host.Network().Connectedness(pid) != network.Connected {
+					continue
+				}
 				annCtx, annCancel := context.WithTimeout(n.ctx, 10*time.Second)
-				s, err := n.host.NewStream(annCtx, pi.ID, protocol.ID("/neo/px/1.0.0"))
+				s, err := n.host.NewStream(annCtx, pid, protocol.ID("/neo/px/1.0.0"))
 				if err != nil {
 					annCancel()
 					continue
 				}
-			var addrs []string
-			for _, a := range n.host.Addrs() {
-				addrs = append(addrs, a.String())
-			}
-			relayIP := getBootstrapRelayIP()
-			relayAddr := fmt.Sprintf("/ip4/%s/tcp/4001/p2p-circuit/p2p/%s", relayIP, n.host.ID().String())
-			addrs = append(addrs, relayAddr)
-			ann := map[string]interface{}{
-				"peer_id": n.host.ID().String(),
+				var addrs []string
+				for _, a := range n.host.Addrs() {
+					addrs = append(addrs, a.String())
+				}
+				relayIP := getBootstrapRelayIP()
+				relayAddr := fmt.Sprintf("/ip4/%s/tcp/4001/p2p-circuit/p2p/%s", relayIP, n.host.ID().String())
+				addrs = append(addrs, relayAddr)
+				ann := map[string]interface{}{
+					"peer_id": n.host.ID().String(),
 					"addrs":   addrs,
 				}
 				if err := json.NewEncoder(s).Encode(ann); err != nil {
@@ -647,7 +766,7 @@ func (n *Libp2pNode) discoveryLoop() {
 				}
 				s.Close()
 				annCancel()
-				log.Printf("px: re-announced %d addrs to bootstrap", len(addrs))
+				log.Printf("px: re-announced %d addrs to custom bootstrap %s", len(addrs), pid)
 			}
 		}
 	}()
@@ -692,13 +811,68 @@ func (n *Libp2pNode) discoveryLoop() {
 				if already {
 					continue
 				}
-				// Connect via bootstrap proxy
+				// Try direct connect first (hole-punching + circuit relay), fall back to PX then proxy
 				go func(pid peer.ID) {
-					cctx, cancel := context.WithTimeout(n.ctx, 30*time.Second)
+					cctx, cancel := context.WithTimeout(n.ctx, 15*time.Second)
 					defer cancel()
-					s, err := n.host.NewStream(cctx, n.bootPeerIDs[0], protocol.ID("/neo/proxy/1.0.0"))
-					if err != nil {
-						log.Printf("proxy: open stream: %v", err)
+					err := n.host.Connect(cctx, peer.AddrInfo{ID: pid})
+					if err == nil {
+						log.Printf("discover: direct connected to %s", pid)
+						gCtx, gCancel := context.WithTimeout(n.ctx, 5*time.Second)
+						s, gErr := n.host.NewStream(gCtx, pid, protocol.ID(NeoProtocolID))
+						gCancel()
+						if gErr == nil {
+							n.lock.Lock()
+							n.activeStreams[pid.String()] = s
+							n.lock.Unlock()
+						}
+						n.sendEvent(Event{Event: "peer_connected", PeerID: pid.String()})
+						return
+					}
+					log.Printf("discover: direct connect to %s failed: %v", pid, err)
+					// Try PX directly with peer to exchange addresses (incl. relay)
+					pxCtx, pxCancel := context.WithTimeout(n.ctx, 10*time.Second)
+					pxStream, pxErr := n.host.NewStream(pxCtx, pid, protocol.ID("/neo/px/1.0.0"))
+					pxCancel()
+					if pxErr == nil {
+						log.Printf("discover: PX exchange with %s succeeded, retrying connect", pid)
+						pxStream.Close()
+						// Retry connect after PX may have updated peerstore with relay addresses
+						rctx, rcancel := context.WithTimeout(n.ctx, 15*time.Second)
+						rerr := n.host.Connect(rctx, peer.AddrInfo{ID: pid})
+						rcancel()
+						if rerr == nil {
+							log.Printf("discover: connected to %s after PX", pid)
+							rctx2, rcancel2 := context.WithTimeout(n.ctx, 5*time.Second)
+							s, gErr := n.host.NewStream(rctx2, pid, protocol.ID(NeoProtocolID))
+							rcancel2()
+							if gErr == nil {
+								n.lock.Lock()
+								n.activeStreams[pid.String()] = s
+								n.lock.Unlock()
+							}
+							n.sendEvent(Event{Event: "peer_connected", PeerID: pid.String()})
+							return
+						}
+						log.Printf("discover: connect after PX to %s failed: %v", pid, rerr)
+					} else {
+						log.Printf("discover: PX with %s failed: %v", pid, pxErr)
+					}
+					// Fall back to proxy through custom bootstrap
+					n.customBootMu.Lock()
+					proxyID := peer.ID("")
+					if len(n.customBootIDs) > 0 {
+						proxyID = n.customBootIDs[0]
+					}
+					n.customBootMu.Unlock()
+					if proxyID == "" {
+						return
+					}
+					pCtx, pCancel := context.WithTimeout(n.ctx, 30*time.Second)
+					defer pCancel()
+					s, pErr := n.host.NewStream(pCtx, proxyID, protocol.ID("/neo/proxy/1.0.0"))
+					if pErr != nil {
+						log.Printf("proxy: open stream: %v", pErr)
 						return
 					}
 					req := map[string]string{"target": pid.String()}
@@ -713,7 +887,6 @@ func (n *Libp2pNode) discoveryLoop() {
 					log.Printf("proxy: sending peer_connected event for %s", pid.String())
 					n.sendEvent(Event{Event: "peer_connected", PeerID: pid.String()})
 					log.Printf("proxy: connected to %s via bootstrap", pid)
-					// Keep stream open - close it when context is done
 					go func() {
 						<-n.ctx.Done()
 						n.lock.Lock()
@@ -726,137 +899,6 @@ func (n *Libp2pNode) discoveryLoop() {
 		}
 	}
 
-	// Announce our presence via DHT provider records
-	go func() {
-		for i := 0; i < 5; i++ {
-			log.Printf("provide: announcing via DHT (attempt %d)", i+1)
-			if err := n.dht.Provide(n.ctx, discoveryCID, true); err != nil {
-				log.Printf("provide: %v", err)
-			} else {
-				log.Printf("provide: announced successfully")
-				break
-			}
-			time.Sleep(30 * time.Second)
-		}
-		for {
-			log.Printf("provide: announcing via DHT")
-			if err := n.dht.Provide(n.ctx, discoveryCID, true); err != nil {
-				log.Printf("provide: %v", err)
-			} else {
-				log.Printf("provide: announced successfully")
-			}
-			time.Sleep(10 * time.Minute)
-		}
-	}()
-
-	// Periodically re-announce via PX to catch peers that connected after us
-	go func() {
-		for {
-			time.Sleep(30 * time.Second)
-			bootInfos := parseBootstrapPeers()
-			for _, pi := range bootInfos {
-				annCtx, annCancel := context.WithTimeout(n.ctx, 10*time.Second)
-				s, err := n.host.NewStream(annCtx, pi.ID, protocol.ID("/neo/px/1.0.0"))
-				if err != nil {
-					annCancel()
-					continue
-				}
-			var addrs []string
-			for _, a := range n.host.Addrs() {
-				addrs = append(addrs, a.String())
-			}
-			relayIP := getBootstrapRelayIP()
-			relayAddr := fmt.Sprintf("/ip4/%s/tcp/4001/p2p-circuit/p2p/%s", relayIP, n.host.ID().String())
-			addrs = append(addrs, relayAddr)
-			ann := map[string]interface{}{
-				"peer_id": n.host.ID().String(),
-					"addrs":   addrs,
-				}
-				if err := json.NewEncoder(s).Encode(ann); err != nil {
-					s.Close()
-					annCancel()
-					continue
-				}
-				s.Close()
-				annCancel()
-				log.Printf("px: re-announced %d addrs to bootstrap", len(addrs))
-			}
-		}
-	}()
-
-	time.Sleep(20 * time.Second)
-
-	discoverTicker := time.NewTicker(30 * time.Second)
-	defer discoverTicker.Stop()
-	for {
-		select {
-		case <-n.ctx.Done():
-			return
-		case <-discoverTicker.C:
-			discCtx, discCancel := context.WithTimeout(n.ctx, 15*time.Second)
-			peers, err := n.dht.FindProviders(discCtx, discoveryCID)
-			discCancel()
-			if err != nil {
-				log.Printf("discover: findproviders err=%v", err)
-				continue
-			}
-			log.Printf("discover: found %d providers", len(peers))
-			log.Printf("discover: LOOP2_START about to iterate %d peers", len(peers))
-			for idx, pi := range peers {
-				log.Printf("discover:   [L2_IDX=%d] provider=%s addrs=%v", idx, pi.ID.String(), pi.Addrs)
-				if pi.ID == n.host.ID() {
-					log.Printf("discover:   [L2_IDX=%d] SKIP self", idx)
-					continue
-				}
-				var isBootstrap bool
-				for _, bp := range n.bootPeerIDs {
-					if bp == pi.ID {
-						isBootstrap = true
-						break
-					}
-				}
-				if isBootstrap {
-					continue
-				}
-				n.lock.RLock()
-				_, already := n.activeStreams[pi.ID.String()]
-				n.lock.RUnlock()
-				if already {
-					continue
-				}
-				// Connect via bootstrap proxy
-				go func(pid peer.ID) {
-					cctx, cancel := context.WithTimeout(n.ctx, 30*time.Second)
-					defer cancel()
-					s, err := n.host.NewStream(cctx, n.bootPeerIDs[0], protocol.ID("/neo/proxy/1.0.0"))
-					if err != nil {
-						log.Printf("proxy: open stream: %v", err)
-						return
-					}
-					req := map[string]string{"target": pid.String()}
-					if err := json.NewEncoder(s).Encode(req); err != nil {
-						log.Printf("proxy: encode: %v", err)
-						s.Close()
-						return
-					}
-					n.lock.Lock()
-					n.activeStreams[pid.String()] = s
-					n.lock.Unlock()
-					log.Printf("proxy: sending peer_connected event for %s", pid.String())
-					n.sendEvent(Event{Event: "peer_connected", PeerID: pid.String()})
-					log.Printf("proxy: connected to %s via bootstrap", pid)
-					// Keep stream open - close it when context is done
-					go func() {
-						<-n.ctx.Done()
-						n.lock.Lock()
-						delete(n.activeStreams, pid.String())
-						n.lock.Unlock()
-						s.Close()
-					}()
-				}(pi.ID)
-			}
-		}
-	}
 }
 
 func (n *Libp2pNode) keepaliveLoop() {
