@@ -26,6 +26,10 @@ class PostRepository @Inject constructor(
 
     fun getPostsByAuthor(authorId: String): Flow<List<Post>> = postDao.getPostsByAuthor(authorId)
 
+    /** Reactive posts authored under any of [authorIds] (e.g. did:key + deviceId). */
+    fun getPostsByAuthors(authorIds: List<String>): Flow<List<Post>> =
+        postDao.getPostsByAuthors(authorIds)
+
     suspend fun getPostsByAuthorList(authorId: String): List<Post> = postDao.getPostsByAuthorList(authorId)
 
     suspend fun getPostsByAuthorList(did: String, deviceId: String): List<Post> =
@@ -126,6 +130,11 @@ class PostRepository @Inject constructor(
      */
     fun getPostCountForAuthor(authorId: String): Flow<Int> {
         return postDao.getPostCountForAuthor(authorId)
+    }
+
+    /** Reactive post count matching any of [authorIds] (e.g. did:key + deviceId). */
+    fun getPostCountForAuthors(authorIds: List<String>): Flow<Int> {
+        return postDao.getPostCountForAuthors(authorIds)
     }
 
     suspend fun getPostCount(): Int {

@@ -125,7 +125,10 @@ class ImageChunker {
         companion object {
             private const val TAG = "ChunkAssemblyManager"
             private const val MAX_CONCURRENT_ASSEMBLIES = 10
-            private const val ASSEMBLY_TIMEOUT_MS = 60_000L
+            // Generous margin: chunks are now delivered reliably (acked + retried
+            // with backoff up to 15s/chunk) and may pause briefly across a
+            // reconnect, so don't sweep a slow-but-recovering transfer mid-flight.
+            private const val ASSEMBLY_TIMEOUT_MS = 180_000L
         }
 
         private data class Assembly(

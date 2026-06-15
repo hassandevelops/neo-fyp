@@ -21,6 +21,7 @@ import org.robolectric.RobolectricTestRunner
 class NotificationsViewModelTest {
 
     private val notificationRepository: NotificationRepository = mockk()
+    private val peerProfileRepository: com.neo.data.repository.PeerProfileRepository = mockk(relaxed = true)
     private val testDispatcher = StandardTestDispatcher()
 
     private lateinit var viewModel: NotificationsViewModel
@@ -30,6 +31,7 @@ class NotificationsViewModelTest {
         Dispatchers.setMain(testDispatcher)
         MockKAnnotations.init(this)
         every { notificationRepository.getUnreadCount() } returns MutableStateFlow(0)
+        every { peerProfileRepository.observeProfilesByDid() } returns MutableStateFlow(emptyMap())
     }
 
     @After
@@ -46,7 +48,7 @@ class NotificationsViewModelTest {
             )
         )
 
-        viewModel = NotificationsViewModel(notificationRepository)
+        viewModel = NotificationsViewModel(notificationRepository, peerProfileRepository)
         backgroundScope.launch(testDispatcher) { viewModel.notifications.collect { } }
         advanceUntilIdle()
 
@@ -57,7 +59,7 @@ class NotificationsViewModelTest {
     fun `empty notifications returns empty list`() = runTest(testDispatcher) {
         every { notificationRepository.getAllNotifications() } returns flowOf(emptyList())
 
-        viewModel = NotificationsViewModel(notificationRepository)
+        viewModel = NotificationsViewModel(notificationRepository, peerProfileRepository)
         backgroundScope.launch(testDispatcher) { viewModel.notifications.collect { } }
         advanceUntilIdle()
 
@@ -69,7 +71,7 @@ class NotificationsViewModelTest {
         every { notificationRepository.getAllNotifications() } returns flowOf(emptyList())
         every { notificationRepository.getUnreadCount() } returns MutableStateFlow(3)
 
-        viewModel = NotificationsViewModel(notificationRepository)
+        viewModel = NotificationsViewModel(notificationRepository, peerProfileRepository)
         backgroundScope.launch(testDispatcher) { viewModel.unreadCount.collect { } }
         advanceUntilIdle()
 
@@ -81,7 +83,7 @@ class NotificationsViewModelTest {
         every { notificationRepository.getAllNotifications() } returns flowOf(emptyList())
         coEvery { notificationRepository.markAsRead("n1") } just Runs
 
-        viewModel = NotificationsViewModel(notificationRepository)
+        viewModel = NotificationsViewModel(notificationRepository, peerProfileRepository)
         backgroundScope.launch(testDispatcher) { viewModel.notifications.collect { } }
         advanceUntilIdle()
         viewModel.markAsRead("n1")
@@ -95,7 +97,7 @@ class NotificationsViewModelTest {
         every { notificationRepository.getAllNotifications() } returns flowOf(emptyList())
         coEvery { notificationRepository.markAllAsRead() } just Runs
 
-        viewModel = NotificationsViewModel(notificationRepository)
+        viewModel = NotificationsViewModel(notificationRepository, peerProfileRepository)
         backgroundScope.launch(testDispatcher) { viewModel.notifications.collect { } }
         advanceUntilIdle()
         viewModel.markAllAsRead()

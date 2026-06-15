@@ -8,7 +8,10 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"os/signal"
 	"sync"
 	"syscall"
@@ -23,6 +26,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/skip2/go-qrcode"
 	"github.com/libp2p/go-libp2p/p2p/host/eventbus"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 )
@@ -267,6 +271,29 @@ func main() {
 	pid := host.ID().String()
 	// lanIP already computed above for relay addresses
 
+	// Pick the public-facing multiaddr to advertise in the QR code.
+	// Prefer the LAN address if we have one; otherwise use the first
+	// non-loopback host address.
+	var publicMultiaddr string
+	if lanIP != "" {
+		publicMultiaddr = fmt.Sprintf("/ip4/%s/tcp/%d/p2p/%s", lanIP, port, pid)
+	} else {
+		for _, a := range host.Addrs() {
+			s := a.String()
+			if !strings.Contains(s, "127.0.0.1") &&
+				!strings.Contains(s, "::1") &&
+				!strings.Contains(s, "0.0.0.0") &&
+				!strings.Contains(s, "::") {
+				publicMultiaddr = s + "/p2p/" + pid
+				break
+			}
+		}
+	}
+	if publicMultiaddr == "" {
+		publicMultiaddr = fmt.Sprintf("/ip4/127.0.0.1/tcp/%d/p2p/%s", port, pid)
+	}
+	deepLink := "neo://bootstrap?maddr=" + url.QueryEscape(publicMultiaddr)
+
 	fmt.Printf("\n=== BOOTSTRAP NODE ===\n")
 	fmt.Printf("PeerID: %s\n", pid)
 	for _, a := range host.Addrs() {
@@ -276,22 +303,84 @@ func main() {
 	fmt.Printf("Listening on port %d\n", port)
 	fmt.Printf("========================\n\n")
 
-	fmt.Printf("Add this to the bootstrap peers list in the Go binary:\n")
-	if lanIP != "" {
-		fmt.Printf("  \"/ip4/%s/tcp/%d/p2p/%s\",\n", lanIP, port, pid)
+	fmt.Printf("Public multiaddr (paste into Neo Settings → Network → Scan QR):\n")
+	fmt.Printf("  %s\n\n", publicMultiaddr)
+	fmt.Printf("Deep link:\n  %s\n\n", deepLink)
+
+	// HTTP server for QR code serving
+	httpPort := 4002
+	if p := os.Getenv("BOOTSTRAP_HTTP_PORT"); p != "" {
+		fmt.Sscanf(p, "%d", &httpPort)
 	}
-	for _, a := range host.Addrs() {
-		s := a.String()
-		if s != fmt.Sprintf("/ip4/%s/tcp/%d", lanIP, port) && s != fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", port) {
-			fmt.Printf("  \"%s/p2p/%s\",\n", s, pid)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, qrHTML, publicMultiaddr, deepLink)
+	})
+	mux.HandleFunc("/qr.png", func(w http.ResponseWriter, r *http.Request) {
+		png, err := qrcode.Encode(deepLink, qrcode.Medium, 512)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
-	}
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(png)
+	})
+	go func() {
+		addr := fmt.Sprintf("0.0.0.0:%d", httpPort)
+		log.Printf("HTTP QR server listening on %s (try http://%s:%d/)", addr, lanIP, httpPort)
+		if err := http.ListenAndServe(addr, mux); err != nil {
+			log.Printf("HTTP server exited: %v", err)
+		}
+	}()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 	log.Println("shutting down")
 }
+
+func containsAny(s string, subs []string) bool {
+	for _, sub := range subs {
+		if contains(s, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || (len(s) > len(sub) && (s[:len(sub)] == sub || s[len(s)-len(sub):] == sub || indexOf(s, sub) >= 0)))
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
+const qrHTML = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Neo Bootstrap QR</title>
+<style>
+body { font-family: -apple-system, sans-serif; background: #0a0a0a; color: #e0e0e0;
+       max-width: 640px; margin: 40px auto; padding: 24px; text-align: center; }
+h1 { color: #ccff00; }
+.qr { background: white; padding: 16px; display: inline-block; margin: 16px 0; }
+.addr { word-break: break-all; background: #1a1a1a; padding: 12px; border-radius: 8px;
+        font-family: monospace; font-size: 12px; margin: 12px 0; }
+</style></head>
+<body>
+<h1>Neo Bootstrap Node</h1>
+<p>Scan this QR code with the Neo app to set this node as your custom bootstrap.</p>
+<div class="qr"><img src="/qr.png" alt="QR code" width="320" height="320"></div>
+<p>Multiaddr:</p>
+<div class="addr">%s</div>
+<p>Deep link:</p>
+<div class="addr">%s</div>
+</body></html>`
 
 func getOutboundIP() string {
 	conn, err := net.Dial("udp", "8.8.8.8:80")

@@ -32,10 +32,11 @@ data class OnboardingPage(
 
 @Composable
 fun OnboardingScreen(
-    onComplete: () -> Unit,
+    onComplete: (username: String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var currentPage by remember { mutableIntStateOf(0) }
+    var username by remember { mutableStateOf("") }
 
     val pages = remember {
         listOf(
@@ -112,92 +113,131 @@ fun OnboardingScreen(
                 .padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Skip button
+            // Skip button (skips the intro, but the profile step is still required)
             Box(
                 modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.TopEnd
             ) {
-                TextButton(onClick = onComplete) {
-                    Text(
-                        text = "Skip",
-                        color = TextWhite60,
-                        fontSize = 14.sp
-                    )
+                if (currentPage < pages.size) {
+                    TextButton(onClick = { currentPage = pages.size }) {
+                        Text(
+                            text = "Skip",
+                            color = TextWhite60,
+                            fontSize = 14.sp
+                        )
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.weight(1f))
 
             // Page content
-            val page = pages[currentPage]
+            if (currentPage < pages.size) {
+                val page = pages[currentPage]
 
-            // Icon with glow
-            Box(
-                modifier = Modifier
-                    .size(140.dp)
-                    .scale(pulseScale),
-                contentAlignment = Alignment.Center
-            ) {
+                // Icon with glow
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
-                                    Color.Transparent
-                                )
-                            ),
-                            shape = CircleShape
-                        )
-                )
-                Box(
-                    modifier = Modifier
-                        .size(120.dp)
-                        .background(
-                            brush = Brush.linearGradient(
-                                colors = listOf(
-                                    SurfaceWhite5,
-                                    SurfaceWhite5.copy(alpha = 0.02f)
-                                )
-                            ),
-                            shape = CircleShape
-                        )
-                        .border(
-                            1.dp,
-                            Brush.linearGradient(
-                                colors = listOf(BorderWhite10, BorderWhite10.copy(alpha = 0.02f))
-                            ),
-                            CircleShape
-                        ),
+                        .size(140.dp)
+                        .scale(pulseScale),
                     contentAlignment = Alignment.Center
                 ) {
-                    page.icon()
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                brush = Brush.radialGradient(
+                                    colors = listOf(
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                                        Color.Transparent
+                                    )
+                                ),
+                                shape = CircleShape
+                            )
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(120.dp)
+                            .clip(CircleShape)
+                            .background(SurfaceElevated2, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        page.icon()
+                    }
                 }
+
+                Spacer(modifier = Modifier.height(48.dp))
+
+                // Title
+                Text(
+                    text = page.title,
+                    color = TextWhite,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Description
+                Text(
+                    text = page.description,
+                    color = TextWhite60,
+                    fontSize = 16.sp,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 24.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+            } else {
+                // Final step: choose a username (required)
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = null,
+                    tint = NeoLime,
+                    modifier = Modifier.size(64.dp)
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Text(
+                    text = "Choose a username",
+                    color = TextWhite,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                    text = "This is how you'll appear to other people on the network. You can add a profile photo later in Settings.",
+                    color = TextWhite60,
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 22.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+
+                Spacer(modifier = Modifier.height(28.dp))
+
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { if (it.length <= 30) username = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("Username", color = TextWhite40) },
+                    shape = NeoShapes.control,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = TextWhite,
+                        unfocusedTextColor = TextWhite,
+                        focusedBorderColor = NeoLime,
+                        unfocusedBorderColor = NeoHairline,
+                        focusedContainerColor = SurfaceElevated1,
+                        unfocusedContainerColor = SurfaceElevated1,
+                        cursorColor = NeoLime
+                    )
+                )
             }
-
-            Spacer(modifier = Modifier.height(48.dp))
-
-            // Title
-            Text(
-                text = page.title,
-                color = TextWhite,
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Description
-            Text(
-                text = page.description,
-                color = TextWhite60,
-                fontSize = 16.sp,
-                textAlign = TextAlign.Center,
-                lineHeight = 24.sp,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
 
             Spacer(modifier = Modifier.weight(1f))
 
@@ -206,20 +246,13 @@ fun OnboardingScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                pages.forEachIndexed { index, _ ->
+                val totalSteps = pages.size + 1
+                repeat(totalSteps) { index ->
                     Box(
                         modifier = Modifier
                             .size(if (index == currentPage) 24.dp else 8.dp, 8.dp)
                             .background(
-                                if (index == currentPage) {
-                                    Brush.linearGradient(
-                                        colors = listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.error)
-                                    )
-                                } else {
-                                    Brush.linearGradient(
-                                        colors = listOf(SurfaceWhite20, SurfaceWhite20)
-                                    )
-                                },
+                                if (index == currentPage) NeoLime else SurfaceElevated3,
                                 RoundedCornerShape(4.dp)
                             )
                     )
@@ -239,11 +272,11 @@ fun OnboardingScreen(
                         modifier = Modifier
                             .weight(1f)
                             .height(56.dp),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = NeoShapes.pill,
                         colors = ButtonDefaults.outlinedButtonColors(
                             contentColor = TextWhite
                         ),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, BorderWhite20)
+                        border = androidx.compose.foundation.BorderStroke(1.dp, NeoHairline)
                     ) {
                         Icon(
                             imageVector = Icons.Default.ArrowBack,
@@ -259,29 +292,35 @@ fun OnboardingScreen(
                     }
                 }
 
+                val isProfileStep = currentPage == pages.size
+                val canAdvance = !isProfileStep || username.isNotBlank()
+
                 Button(
                     onClick = {
-                        if (currentPage < pages.lastIndex) {
-                            currentPage++
+                        if (isProfileStep) {
+                            if (username.isNotBlank()) onComplete(username.trim())
                         } else {
-                            onComplete()
+                            currentPage++
                         }
                     },
+                    enabled = canAdvance,
                     modifier = Modifier
                         .weight(1f)
                         .height(56.dp),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = NeoShapes.pill,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
+                        containerColor = NeoLime,
+                        contentColor = NeoBlack,
+                        disabledContainerColor = SurfaceElevated2,
+                        disabledContentColor = TextWhite40
                     )
                 ) {
                     Text(
-                        text = if (currentPage < pages.lastIndex) "Next" else "Get Started",
-                        color = TextWhite,
+                        text = if (isProfileStep) "Get Started" else "Next",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    if (currentPage < pages.lastIndex) {
+                    if (!isProfileStep) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Icon(
                             imageVector = Icons.Default.ArrowForward,

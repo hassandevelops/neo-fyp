@@ -69,31 +69,13 @@ fun EnhancedHeader(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 // Profile avatar circle — lime ring
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .border(2.dp, NeoLime, CircleShape)
-                        .background(NeoGray900, CircleShape)
-                        .clickable(onClick = onProfileClick),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (profileImageUri != null) {
-                        Image(
-                            painter = rememberAsyncImagePainter(model = profileImageUri),
-                            contentDescription = "Profile",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.Person,
-                            contentDescription = "Profile",
-                            tint = TextWhite60,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
+                UserAvatar(
+                    imageUri = profileImageUri,
+                    size = 36.dp,
+                    ringColor = NeoLime,
+                    contentDescription = "Profile",
+                    modifier = Modifier.clickable(onClick = onProfileClick)
+                )
 
                 Image(
                     painter = painterResource(id = R.drawable.splash_no_bg),

@@ -29,12 +29,18 @@
     <!-- Notification permission for Android 13+ -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Camera permission for QR scanning the bootstrap multiaddr -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
     <!-- Bluetooth hardware requirement -->
-    <uses-feature 
-        android:name="android.hardware.bluetooth" 
+    <uses-feature
+        android:name="android.hardware.bluetooth"
         android:required="false" />
-    <uses-feature 
-        android:name="android.hardware.bluetooth_le" 
+    <uses-feature
+        android:name="android.hardware.bluetooth_le"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera"
         android:required="false" />
 
     <application
@@ -82,6 +88,20 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- QR scan activity for capturing bootstrap multiaddrs -->
+        <activity
+            android:name=".ui.screens.settings.QrScanActivity"
+            android:enabled="true"
+            android:exported="true"
+            android:theme="@style/Theme.App.Starting">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="neo" android:host="bootstrap" />
+            </intent-filter>
+        </activity>
         
         <!-- FileProvider for sharing images -->
         <provider

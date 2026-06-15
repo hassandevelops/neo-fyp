@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.neo.bluetooth.Message
 import com.neo.bluetooth.MessageProtocol
+import com.neo.data.preferences.UserPreferences
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -29,7 +30,8 @@ class GoLibP2pNode(
     private val context: Context,
     private val scope: CoroutineScope,
     private val deviceId: String,
-    private val publicKeyBase64: String
+    private val publicKeyBase64: String,
+    private val userPreferences: UserPreferences? = null
 ) {
     companion object {
         private const val TAG = "GoLibP2pNode"
@@ -45,6 +47,7 @@ class GoLibP2pNode(
     private var writer: OutputStreamWriter? = null
     private var reader: BufferedReader? = null
     private var connected = false
+    @Volatile private var running = false
     private val _connectedPeers = MutableStateFlow<List<String>>(emptyList())
     val connectedPeers: StateFlow<List<String>> = _connectedPeers.asStateFlow()
 
@@ -53,33 +56,108 @@ class GoLibP2pNode(
     )
     val incomingMessages: Flow<Pair<String, Message>> = _incomingMessages
 
+    private val _dhtPeerCount = MutableStateFlow(0)
+    val dhtPeerCount: StateFlow<Int> = _dhtPeerCount.asStateFlow()
+
+    private val _bootstrapConnected = MutableStateFlow(false)
+    val bootstrapConnected: StateFlow<Boolean> = _bootstrapConnected.asStateFlow()
+
+    private val _lastError = MutableStateFlow<String?>(null)
+    val lastError: StateFlow<String?> = _lastError.asStateFlow()
+
     // Saved peers for backward compatibility
     private val savedPeers = mutableListOf<String>()
 
     /**
      * Start the Go binary and connect to it.
+     *
+     * Wraps the lifecycle in a supervisor loop: if the Go process dies for any
+     * reason (crash, OOM, manual kill), this method re-extracts the binary and
+     * re-spawns it with exponential backoff. The loop only exits when [stop] is
+     * called.
      */
     fun start() {
+        if (running) {
+            Log.w(TAG, "start() called while already running; ignoring")
+            return
+        }
+        running = true
         scope.launch(Dispatchers.IO) {
-            try {
-                startProcess()
-                connectToProcess()
-                // launch reader loop in separate coroutine so sendInit runs
-                scope.launch(Dispatchers.IO) { startReaderLoop() }
-                sendInit()
-                startPeerMonitor()
+            var backoffMs = 1000L
+            val maxBackoffMs = 30_000L
+            while (running) {
+                var iterationOk = false
+                try {
+                    startProcess()
+                    connectToProcess()
+                    // launch reader loop in separate coroutine so sendInit runs
+                    scope.launch(Dispatchers.IO) { startReaderLoop() }
+                    sendInit()
+                    sendBootstrapOverride()
+                    startPeerMonitor()
 
-                // Connect to any saved peers
-                for (saved in savedPeers.toList()) {
-                    sendCommand(JSONObject().apply {
-                        put("cmd", "connect")
-                        put("multiaddr", saved)
-                    })
+                    // Connect to any saved peers
+                    for (saved in savedPeers.toList()) {
+                        sendCommand(JSONObject().apply {
+                            put("cmd", "connect")
+                            put("multiaddr", saved)
+                        })
+                    }
+                    iterationOk = true
+                    backoffMs = 1000L  // healthy reset
+
+                    // Block until the process dies or stop() is called.
+                    // We re-check `running` periodically to avoid a long waitFor() on shutdown.
+                    val proc = process
+                    if (proc != null) {
+                        while (running && proc.isAlive) {
+                            delay(500)
+                        }
+                    }
+                    if (!running) return@launch
+                    Log.w(TAG, "neoserver process exited; restarting in ${backoffMs}ms")
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e(TAG, "neoserver iteration failed; restarting in ${backoffMs}ms", e)
+                } finally {
+                    if (!iterationOk) {
+                        // teardown partial state before next attempt
+                        try { writer?.close() } catch (_: Exception) {}
+                        try { reader?.close() } catch (_: Exception) {}
+                        try { socket?.close() } catch (_: Exception) {}
+                        writer = null; reader = null; socket = null
+                        try { process?.destroyForcibly() } catch (_: Exception) {}
+                        process = null
+                        connected = false
+                        _connectedPeers.value = emptyList()
+                    }
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to start Go libp2p", e)
+                if (!running) return@launch
+                delay(backoffMs)
+                backoffMs = (backoffMs * 2).coerceAtMost(maxBackoffMs)
             }
         }
+    }
+
+    /**
+     * Read the user-configured bootstrap multiaddr from [UserPreferences] and push
+     * it to the Go process. If no override is set, the Go process uses its built-in
+     * default list. This is called once after the Go process starts, and on every
+     * restart of the supervisor loop.
+     */
+    private suspend fun sendBootstrapOverride() {
+        val override = userPreferences?.bootstrapMultiaddr
+        val enabled = userPreferences?.bootstrapEnabled == true
+        if (!enabled || override.isNullOrBlank()) {
+            Log.d(TAG, "No bootstrap override configured; using defaults")
+            return
+        }
+        Log.i(TAG, "Applying bootstrap override: $override")
+        sendCommand(JSONObject().apply {
+            put("cmd", "set_bootstrap")
+            put("multiaddr", override)
+        })
     }
 
     /**
@@ -188,6 +266,16 @@ class GoLibP2pNode(
                         scope.launch { _incomingMessages.emit(peerId to message) }
                     }
                 }
+                "topic_message" -> {
+                    val peerId = obj.optString("peerID")
+                    val msgStr = obj.optString("message")
+                    val message = MessageProtocol.deserialize(msgStr)
+                    if (message != null) {
+                        // Tag with "gossipsub:" prefix so the sync layer
+                        // knows not to republish back to the topic.
+                        scope.launch { _incomingMessages.emit("gossipsub:$peerId" to message) }
+                    }
+                }
                 "peer_connected" -> {
                     val pid = obj.optString("peerID")
                     _connectedPeers.value = _connectedPeers.value + pid
@@ -196,8 +284,19 @@ class GoLibP2pNode(
                     val pid = obj.optString("peerID")
                     _connectedPeers.value = _connectedPeers.value.filter { it != pid }
                 }
-                "error" -> Log.w(TAG, "Go error: ${obj.optString("error")}")
-                "dht_count" -> Log.d(TAG, "DHT peers: ${obj.optInt("count")}")
+                "error" -> {
+                    val err = obj.optString("error")
+                    Log.w(TAG, "Go error: $err")
+                    _lastError.value = err
+                }
+                "dht_count" -> {
+                    val count = obj.optInt("count")
+                    Log.d(TAG, "DHT peers: $count")
+                    _dhtPeerCount.value = count
+                }
+                "ready" -> {
+                    _bootstrapConnected.value = true
+                }
                 "peers" -> { }
                 "pong" -> { }
                 else -> Log.d(TAG, "Unknown event: ${obj.optString("event")}")
@@ -238,6 +337,9 @@ class GoLibP2pNode(
     }
 
     fun stop() {
+        // Signal the supervisor loop to exit, then ask the Go process to stop
+        // gracefully, then force-kill if it doesn't exit in time.
+        running = false
         kotlinx.coroutines.runBlocking {
             try {
                 sendCommand(JSONObject().apply { put("cmd", "stop") })
@@ -246,10 +348,14 @@ class GoLibP2pNode(
         try { writer?.close() } catch (_: Exception) { }
         try { reader?.close() } catch (_: Exception) { }
         try { socket?.close() } catch (_: Exception) { }
-        process?.destroy()
-        process?.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
-        process?.destroyForcibly()
+        try {
+            process?.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (_: Exception) { }
+        try { process?.destroyForcibly() } catch (_: Exception) { }
         process = null
+        writer = null
+        reader = null
+        socket = null
         connected = false
         _connectedPeers.value = emptyList()
         Log.d(TAG, "Go libp2p stopped")
@@ -315,9 +421,25 @@ class GoLibP2pNode(
         return prefs.getStringSet("saved_peers", emptySet())?.toList() ?: emptyList()
     }
 
-    suspend fun publishToTopic(message: Message): Boolean {
-        // Broadcast handles this for direct streams
-        broadcastToPeers(message)
-        return true
+    suspend fun publishToTopic(message: Message): Boolean =
+        publishToGossipSub(message)
+
+    /**
+     * Publish a message to the GossipSub topic. The Go binary's GossipSub
+     * layer handles fanout to all subscribed peers (via the libp2p mesh,
+     * reachable through IPFS AutoRelay for NAT'd peers).
+     */
+    suspend fun publishToGossipSub(message: Message): Boolean {
+        return try {
+            val json = MessageProtocol.serialize(message)
+            sendCommand(JSONObject().apply {
+                put("cmd", "publish")
+                put("message", json)
+            })
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "publishToGossipSub failed", e)
+            false
+        }
     }
 }

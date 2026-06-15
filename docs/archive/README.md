@@ -1,3 +1,4 @@
+<!-- DEPRECATED — see docs/CURRENT.md. This file describes an older architecture that has been superseded. -->
 # Neo — Project Context Index
 
 > This directory is the permanent project memory system for Neo.

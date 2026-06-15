@@ -71,6 +71,8 @@ class PostDetailViewModelTest {
             createReactionUseCase = createReactionUseCase,
             deleteReactionUseCase = deleteReactionUseCase,
             cryptoManager = cryptoManager,
+            identityManager = mockk(relaxed = true),
+            peerProfileRepository = mockk(relaxed = true),
             notificationRepository = notificationRepository,
             savedPostRepository = savedPostRepository
         )
@@ -181,29 +183,30 @@ class PostDetailViewModelTest {
     }
 
     @Test
-    fun `create comment inserts notification on success`() = runTest(testDispatcher) {
+    fun `create comment does not insert a self-notification`() = runTest(testDispatcher) {
+        // Notifications are now generated for incoming peer events (GossipProtocol),
+        // not for the local user's own actions.
         coEvery { createCommentUseCase(any(), any(), any(), any()) } returns Result.success(mockk(relaxed = true))
-        coEvery { notificationRepository.insert(any()) } just Runs
         val vm = createViewModel()
 
         vm.createComment(postId = "post-1", content = "Nice!", authorName = "Alice")
         advanceUntilIdle()
 
-        coVerify { notificationRepository.insert(match { it.type == "comment" }) }
+        coVerify(exactly = 0) { notificationRepository.insert(any()) }
+        assertTrue(vm.uiState.value is PostDetailViewModel.UiState.Success)
     }
 
     @Test
-    fun `toggle like inserts notification for new like`() = runTest(testDispatcher) {
+    fun `toggle like does not insert a self-notification for new like`() = runTest(testDispatcher) {
         every { cryptoManager.getDeviceId() } returns "device-1"
         coEvery { reactionRepository.hasUserReacted("post-1", "device-1", ReactionType.LIKE) } returns false
         coEvery { createReactionUseCase("post-1", "Alice", ReactionType.LIKE) } returns Result.success(mockk(relaxed = true))
-        coEvery { notificationRepository.insert(any()) } just Runs
         val vm = createViewModel()
 
         vm.toggleLike(postId = "post-1", userName = "Alice")
         advanceUntilIdle()
 
-        coVerify { notificationRepository.insert(match { it.type == "like" }) }
+        coVerify(exactly = 0) { notificationRepository.insert(any()) }
     }
 
     @Test

@@ -21,7 +21,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neo.data.model.Notification
+import com.neo.data.model.PeerProfile
 import com.neo.ui.components.GradientBackground
+import com.neo.ui.components.UserAvatar
+import com.neo.ui.components.organicPattern
 import com.neo.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.*
@@ -33,6 +36,9 @@ fun SearchScreen(
     posts: List<com.neo.data.model.Post>,
     onPostClick: (com.neo.data.model.Post) -> Unit,
     onBack: () -> Unit,
+    profiles: Map<String, PeerProfile> = emptyMap(),
+    selfIds: Set<String> = emptySet(),
+    selfImageUri: String? = null,
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -92,10 +98,12 @@ fun SearchScreen(
                                 focusedTextColor = TextWhite,
                                 unfocusedTextColor = TextWhite,
                                 focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = BorderWhite10,
+                                unfocusedBorderColor = NeoHairline,
+                                focusedContainerColor = SurfaceElevated1,
+                                unfocusedContainerColor = SurfaceElevated1,
                                 cursorColor = MaterialTheme.colorScheme.primary
                             ),
-                            shape = RoundedCornerShape(16.dp),
+                            shape = NeoShapes.pill,
                             singleLine = true
                         )
                     }
@@ -175,18 +183,33 @@ fun SearchScreen(
                         Card(
                             onClick = { onPostClick(post) },
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp),
+                            shape = NeoShapes.card,
                             colors = CardDefaults.cardColors(
-                                containerColor = SurfaceWhite5
+                                containerColor = SurfaceElevated1
                             )
                         ) {
+                            // Search results show post content → reading surface,
+                            // excluded from the global pattern per spec.
                             Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    text = post.authorName,
-                                    color = TextWhite,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    UserAvatar(
+                                        imageUri = com.neo.ui.util.resolveAvatar(
+                                            authorId = post.authorId,
+                                            profiles = profiles,
+                                            selfIds = selfIds,
+                                            selfImageUri = selfImageUri
+                                        ),
+                                        size = 32.dp,
+                                        contentDescription = post.authorName
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = post.authorName,
+                                        color = TextWhite,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
                                     text = post.content,
@@ -207,9 +230,11 @@ fun SearchScreen(
 fun NotificationsScreen(
     viewModel: com.neo.ui.viewmodel.NotificationsViewModel,
     onBack: () -> Unit,
+    onNotificationClick: (Notification) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val notifications by viewModel.notifications.collectAsState()
+    val profilesByDid by viewModel.profilesByDid.collectAsState()
 
     GradientBackground(modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -284,7 +309,11 @@ fun NotificationsScreen(
                     items(notifications, key = { it.id }) { notification ->
                         NotificationItem(
                             notification = notification,
-                            onClick = { viewModel.markAsRead(notification.id) }
+                            avatarUri = notification.actorId?.let { profilesByDid[it]?.avatarPath },
+                            onClick = {
+                                viewModel.markAsRead(notification.id)
+                                onNotificationClick(notification)
+                            }
                         )
                     }
                 }
@@ -296,12 +325,15 @@ fun NotificationsScreen(
 @Composable
 private fun NotificationItem(
     notification: Notification,
+    avatarUri: String?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val icon = when (notification.type) {
         "like" -> Icons.Default.Favorite
         "comment" -> Icons.Default.Chat
+        "reply" -> Icons.Default.Reply
+        "follow" -> Icons.Default.PersonAdd
         "peer" -> Icons.Default.Radio
         "system" -> Icons.Default.Info
         else -> Icons.Default.Notifications
@@ -309,6 +341,8 @@ private fun NotificationItem(
     val iconColor = when (notification.type) {
         "like" -> NeoRed
         "comment" -> NeoLime
+        "reply" -> NeoLime
+        "follow" -> NeoLime
         "peer" -> NeoTeal
         "system" -> NeoOrange
         else -> TextWhite60
@@ -318,7 +352,7 @@ private fun NotificationItem(
         modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        color = if (notification.isRead) Color.Transparent else NeoGray900.copy(alpha = 0.5f)
+        color = if (notification.isRead) Color.Transparent else SurfaceElevated1
     ) {
         Row(
             modifier = Modifier
@@ -327,19 +361,31 @@ private fun NotificationItem(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(iconColor.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = iconColor,
-                    modifier = Modifier.size(20.dp)
+            // Actor avatar with a small type badge bottom-end.
+            Box(modifier = Modifier.size(40.dp)) {
+                UserAvatar(
+                    imageUri = avatarUri,
+                    size = 40.dp,
+                    contentDescription = notification.authorName
                 )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(18.dp)
+                        .clip(CircleShape)
+                        .background(NeoBlack)
+                        .padding(2.dp)
+                        .clip(CircleShape)
+                        .background(iconColor.copy(alpha = 0.20f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = iconColor,
+                        modifier = Modifier.size(10.dp)
+                    )
+                }
             }
 
             Column(modifier = Modifier.weight(1f)) {
@@ -390,6 +436,7 @@ fun SettingsScreen(
     onNavigateToPrivacy: () -> Unit,
     onNavigateToNotifications: () -> Unit,
     onNavigateToAbout: () -> Unit,
+    onNavigateToNetwork: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     GradientBackground(modifier = modifier) {
@@ -426,13 +473,20 @@ fun SettingsScreen(
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(NeoSpacing.md)
             ) {
                 item {
                     SettingsItem(
                         icon = Icons.Default.Person,
                         title = "Account",
                         onClick = onNavigateToAccount
+                    )
+                }
+                item {
+                    SettingsItem(
+                        icon = Icons.Default.Cloud,
+                        title = "Network",
+                        onClick = onNavigateToNetwork
                     )
                 }
                 item {
@@ -471,14 +525,15 @@ private fun SettingsItem(
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = NeoShapes.card,
         colors = CardDefaults.cardColors(
-            containerColor = SurfaceWhite5
+            containerColor = SurfaceElevated1
         )
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .organicPattern(SurfaceElevated1, richness = 4)
                 .padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically

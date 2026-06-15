@@ -7,6 +7,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -22,9 +23,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
@@ -34,15 +39,19 @@ import coil.request.ImageRequest
 import com.neo.data.model.Post
 import com.neo.ui.theme.*
 import java.io.File
+import kotlinx.coroutines.launch
 
 /**
- * Post card — full-bleed image with dark scrim overlay.
- * Author info and stats overlaid at the bottom of the image.
+ * Post card — horizontal layout: media on the left, content on the right, with a
+ * circular author-avatar cutout balanced on the top-right corner. Clean matte
+ * surface (no texture). Image tap opens the full-screen viewer; double-tap likes;
+ * tapping the avatar opens the author's profile.
  */
 @Composable
 fun EnhancedPostCard(
     post: Post,
-    onPostClick: () -> Unit,
+    onImageClick: () -> Unit = {},
+    onAuthorClick: () -> Unit = {},
     onLikeClick: () -> Unit,
     onCommentClick: () -> Unit,
     onSaveClick: () -> Unit = {},
@@ -55,6 +64,7 @@ fun EnhancedPostCard(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     val likeColor by animateColorAsState(
         targetValue = if (isLiked) NeoLime else TextWhite60,
@@ -85,194 +95,333 @@ fun EnhancedPostCard(
         remember { mutableFloatStateOf(0.8f) }
     }
 
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .clickable(onClick = onPostClick),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = NeoGray900)
-    ) {
-        Column {
-            val imagePath = post.imageHash?.let {
-                java.io.File(context.filesDir, "images/$it.jpg").takeIf { f -> f.exists() }
-            }
+    // Double-tap heart burst feedback
+    var heartVisible by remember { mutableStateOf(false) }
+    val heartScale by animateFloatAsState(
+        targetValue = if (heartVisible) 1f else 0.3f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "heart_scale"
+    )
+    val heartAlpha by animateFloatAsState(
+        targetValue = if (heartVisible) 1f else 0f,
+        animationSpec = tween(durationMillis = 200),
+        label = "heart_alpha"
+    )
+    // Instagram convention: double-tap only likes (never unlikes); always bursts.
+    val onDoubleTapLike: () -> Unit = {
+        if (!isLiked) onLikeClick()
+        scope.launch {
+            heartVisible = true
+            kotlinx.coroutines.delay(650)
+            heartVisible = false
+        }
+    }
 
-            Box {
-                if (imagePath != null) {
-                    Image(
-                        painter = rememberAsyncImagePainter(model = imagePath),
-                        contentDescription = "Post image",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 220.dp, max = 380.dp),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    Text(
-                        text = post.content,
-                        color = TextWhite,
-                        fontSize = 15.sp,
-                        lineHeight = 22.sp,
-                        modifier = Modifier.padding(16.dp)
-                    )
-                }
+    val imagePath = post.imageHash?.let {
+        java.io.File(context.filesDir, "images/$it.jpg").takeIf { f -> f.exists() }
+    }
 
-                // LIVE badge — top-left
-                if (isLive) {
-                    Row(
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(12.dp)
-                            .background(NeoBlack.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(7.dp)
-                                .scale(livePulse)
-                                .background(NeoGreen, CircleShape)
-                        )
-                        Text("LIVE", color = TextWhite, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-
-                // View count — top-right
-                if (imagePath != null && commentCount > 0) {
-                    Row(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(12.dp)
-                            .background(NeoBlack.copy(alpha = 0.5f), RoundedCornerShape(20.dp))
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(Icons.Default.People, null, tint = TextWhite60, modifier = Modifier.size(13.dp))
-                        Text(
-                            text = if (commentCount > 999) "${commentCount / 1000}K" else commentCount.toString(),
-                            color = TextWhite,
-                            fontSize = 11.sp
-                        )
-                    }
-                }
-            }
-
-            // Author + action section
+    // Outer Box hosts the notched card and the avatar embedded in its cutout.
+    Box(modifier = modifier.fillMaxWidth()) {
+        NeoCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = PostCardTopInset),
+            shape = PostCardShape,
+            tone = SurfaceElevated2,
+            textured = false
+        ) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                    .padding(16.dp)
+                    // Double-tap anywhere on the card (text posts) likes the post.
+                    .pointerInput(post.id) {
+                        detectTapGestures(onDoubleTap = { onDoubleTapLike() })
+                    }
             ) {
+                // ── Media (left) · content (right) ───────────────────────────
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalAlignment = Alignment.Top
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(NeoGray800),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (authorImageUri != null) {
+                    if (imagePath != null) {
+                        Box(
+                            modifier = Modifier
+                                .width(118.dp)
+                                .height(152.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(SurfaceElevated3)
+                                // Single tap → viewer, double tap → like
+                                .pointerInput(post.id) {
+                                    detectTapGestures(
+                                        onTap = { onImageClick() },
+                                        onDoubleTap = { onDoubleTapLike() }
+                                    )
+                                }
+                        ) {
                             Image(
-                                painter = rememberAsyncImagePainter(model = authorImageUri),
-                                contentDescription = null,
+                                painter = rememberAsyncImagePainter(model = imagePath),
+                                contentDescription = "Post image",
                                 modifier = Modifier.fillMaxSize(),
                                 contentScale = ContentScale.Crop
                             )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.Person,
-                                contentDescription = null,
-                                tint = TextWhite60,
-                                modifier = Modifier.size(22.dp)
-                            )
+                            if (isLive) {
+                                Row(
+                                    modifier = Modifier
+                                        .align(Alignment.TopStart)
+                                        .padding(6.dp)
+                                        .background(NeoBlack.copy(alpha = 0.6f), NeoShapes.pill)
+                                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .scale(livePulse)
+                                            .background(NeoGreen, CircleShape)
+                                    )
+                                    Text("LIVE", color = TextWhite, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
                     }
-                    Column {
+
+                    // Content column on the RIGHT
+                    Column(modifier = Modifier.weight(1f)) {
+                        // Name + timestamp reserve clearance for the avatar cutout
                         Text(
                             text = post.authorName,
                             color = TextWhite,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(end = 52.dp)
                         )
-                        if (post.content.isNotEmpty() && imagePath != null) {
+                        Row(
+                            modifier = Modifier.padding(end = 52.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            if (isLive && imagePath == null) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .scale(livePulse)
+                                        .background(NeoGreen, CircleShape)
+                                )
+                            }
+                            Text(
+                                text = formatTimestamp(post.timestamp),
+                                color = TextWhite40,
+                                fontSize = 13.sp
+                            )
+                        }
+
+                        if (!post.locationName.isNullOrBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.LocationOn,
+                                    contentDescription = "Location",
+                                    tint = NeoLime,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = post.locationName,
+                                    color = TextWhite60,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        if (post.content.isNotEmpty()) {
+                            Spacer(Modifier.height(10.dp))
                             Text(
                                 text = post.content,
-                                color = TextWhite60,
-                                fontSize = 12.sp,
-                                maxLines = 1,
+                                color = TextWhite80,
+                                fontSize = 14.sp,
+                                lineHeight = 20.sp,
+                                maxLines = if (imagePath != null) 4 else 6,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
                         }
                     }
                 }
 
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(14.dp))
 
+                // ── Action row — full width, consistent for all post types ──────
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(20.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp),
-                            modifier = Modifier.clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) {
-                                onLikeClick()
-                            }
-                        ) {
-                            Box(modifier = Modifier.scale(likeScale)) {
-                                Icon(
-                                    imageVector = if (isLiked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-                                    contentDescription = "Like",
-                                    tint = likeColor,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                            Text(likeCount.toString(), color = TextWhite80, fontSize = 13.sp)
-                        }
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp),
-                            modifier = Modifier.clickable(onClick = onCommentClick)
-                        ) {
-                            Icon(Icons.Outlined.ChatBubbleOutline, "Comment", tint = TextWhite60, modifier = Modifier.size(20.dp))
-                            Text(commentCount.toString(), color = TextWhite80, fontSize = 13.sp)
-                        }
-
-                        Icon(
-                            Icons.Outlined.Share,
-                            "Share",
-                            tint = TextWhite60,
-                            modifier = Modifier
-                                .size(20.dp)
-                                .clickable { sharePost(context, post) }
-                        )
-                    }
-
-                    Icon(
-                        imageVector = if (isSaved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
-                        contentDescription = "Save",
+                    ActionItem(
+                        icon = if (isLiked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                        label = likeCount.toString(),
+                        tint = likeColor,
+                        iconScale = likeScale,
+                        onClick = onLikeClick
+                    )
+                    Spacer(Modifier.width(24.dp))
+                    ActionItem(
+                        icon = Icons.Outlined.ChatBubbleOutline,
+                        label = commentCount.toString(),
+                        tint = TextWhite60,
+                        onClick = onCommentClick
+                    )
+                    Spacer(Modifier.width(24.dp))
+                    ActionItem(
+                        icon = Icons.Outlined.Share,
+                        label = null,
+                        tint = TextWhite60,
+                        onClick = { sharePost(context, post) }
+                    )
+                    Spacer(Modifier.weight(1f))
+                    ActionItem(
+                        icon = if (isSaved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                        label = null,
                         tint = bookmarkColor,
-                        modifier = Modifier
-                            .size(20.dp)
-                            .clickable { onSaveClick() }
+                        onClick = onSaveClick
                     )
                 }
             }
+        }
+
+        // Author avatar — embedded in the card's concave notch (concentric).
+        PostAvatarCutout(
+            authorImageUri = authorImageUri,
+            onClick = onAuthorClick,
+            size = PostAvatarSize,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset(x = PostAvatarOffsetX, y = PostAvatarOffsetY)
+        )
+
+        // Double-tap heart burst — centered over the card
+        if (heartAlpha > 0f) {
+            Icon(
+                imageVector = Icons.Filled.Favorite,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(88.dp)
+                    .graphicsLayer {
+                        scaleX = heartScale
+                        scaleY = heartScale
+                        alpha = heartAlpha
+                    }
+            )
+        }
+    }
+}
+
+/**
+ * A single feed action (icon + optional count). Uniform sizing/spacing so the
+ * action row reads consistently across image and text posts.
+ */
+@Composable
+private fun ActionItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String?,
+    tint: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    iconScale: Float = 1f
+) {
+    Row(
+        modifier = modifier
+            .clip(NeoShapes.pill)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier
+                .size(22.dp)
+                .scale(iconScale)
+        )
+        if (label != null) {
+            Text(label, color = TextWhite80, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+// ── Post card geometry ──────────────────────────────────────────────────────
+// The card's top-right CORNER curves inward (concave notch). The notch circle
+// (radius 34dp) is centred 24dp in from both the top and right edges; the avatar
+// (Ø56 → radius 28) is placed concentric with it (uniform 6dp gap) so it nests into
+// the corner, poking ~4dp diagonally past the edges. Offsets derived from that centre.
+private val PostAvatarSize = 56.dp
+private val PostCardTopInset = 10.dp       // room for the avatar's slight top poke
+private val PostAvatarOffsetX = 4.dp       // avatarRadius 28 - notchInset 24
+private val PostAvatarOffsetY = 6.dp       // (topInset 10 + notchInset 24) - avatarRadius 28
+private val PostCardShape = NotchedCardShape(
+    cornerRadius = 24.dp,
+    notchRadius = 34.dp,
+    notchInset = 24.dp,
+    filletRadius = 12.dp
+)
+
+/**
+ * Circular lime avatar/button embedded in the card's concave cutout. The cutout
+ * (a background-coloured circle behind it) provides the separation, so this is a
+ * plain lime circle.
+ */
+@Composable
+private fun PostAvatarCutout(
+    authorImageUri: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: Dp = 56.dp
+) {
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(NeoLime)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        if (authorImageUri != null) {
+            Image(
+                painter = rememberAsyncImagePainter(model = authorImageUri),
+                contentDescription = "Author",
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(3.dp)
+                    .clip(CircleShape),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Icon(
+                painter = painterResource(id = com.neo.R.drawable.ic_default_avatar),
+                contentDescription = "Author",
+                tint = NeoBlack,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(11.dp)
+            )
         }
     }
 }

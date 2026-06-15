@@ -9,13 +9,16 @@ import com.neo.data.model.Post
 import com.neo.data.model.ReactionType
 import com.neo.data.repository.CommentRepository
 import com.neo.data.repository.NotificationRepository
+import com.neo.data.model.PeerProfile
 import com.neo.data.repository.PostRepository
+import com.neo.data.repository.PeerProfileRepository
 import com.neo.data.repository.ReactionRepository
 import com.neo.data.repository.SavedPostRepository
 import com.neo.domain.usecase.CreateCommentUseCase
 import com.neo.domain.usecase.CreateReactionUseCase
 import com.neo.domain.usecase.DeleteReactionUseCase
 import com.neo.security.CryptoManager
+import com.neo.security.IdentityManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
@@ -48,11 +51,23 @@ class PostDetailViewModel @Inject constructor(
     private val createReactionUseCase: CreateReactionUseCase,
     private val deleteReactionUseCase: DeleteReactionUseCase,
     private val cryptoManager: CryptoManager,
+    private val identityManager: IdentityManager,
+    private val peerProfileRepository: PeerProfileRepository,
     private val notificationRepository: NotificationRepository,
     private val savedPostRepository: SavedPostRepository
 ) : AndroidViewModel(application) {
 
     private val postId: String? = savedStateHandle.get<String>("postId")
+
+    /** The local user's identity DID + deviceId — ids that represent "me". */
+    val myDid: String = runCatching { identityManager.getDid() }.getOrDefault("")
+    val selfIds: Set<String> =
+        setOf(myDid, cryptoManager.getDeviceId()).filter { it.isNotEmpty() }.toSet()
+
+    /** Peer profiles keyed by DID, for resolving avatars of other users. */
+    val profilesByDid: StateFlow<Map<String, PeerProfile>> =
+        peerProfileRepository.observeProfilesByDid()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     var loadAttempted = false
         private set
@@ -96,6 +111,60 @@ class PostDetailViewModel @Inject constructor(
     fun getRepliesForComment(commentId: String) =
         commentRepository.getRepliesForComment(commentId)
 
+    /** Device id of the local user — used to resolve the local user's own avatar. */
+    fun currentUserId(): String = cryptoManager.getDeviceId()
+
+    /**
+     * Build a flattened two-level thread structure (top-level comment + its
+     * replies) from a single stream of all comments for the post. Replies are
+     * grouped under their thread root, so a reply-to-a-reply still appears under
+     * the original top-level comment instead of nesting indefinitely.
+     */
+    fun getCommentThreadsForPost(postId: String): Flow<List<com.neo.data.model.CommentThread>> =
+        commentRepository.getAllCommentsForPost(postId).map { comments ->
+            val byId = comments.associateBy { it.id }
+
+            // Walk parent links up to the first comment with no parent. If a
+            // parent is missing locally, the deepest reachable comment becomes
+            // the root so nothing is dropped from the UI.
+            fun rootIdOf(comment: com.neo.data.model.Comment): String {
+                var current = comment
+                val guard = HashSet<String>()
+                while (current.parentCommentId != null && guard.add(current.id)) {
+                    val parent = byId[current.parentCommentId] ?: break
+                    current = parent
+                }
+                return current.id
+            }
+
+            val repliesByRoot = HashMap<String, MutableList<com.neo.data.model.Comment>>()
+            val topLevel = ArrayList<com.neo.data.model.Comment>()
+
+            for (comment in comments) {
+                if (comment.parentCommentId == null) {
+                    topLevel.add(comment)
+                } else {
+                    val root = rootIdOf(comment)
+                    if (root == comment.id) {
+                        // Orphaned reply (root not found locally) — surface it as top-level.
+                        topLevel.add(comment)
+                    } else {
+                        repliesByRoot.getOrPut(root) { mutableListOf() }.add(comment)
+                    }
+                }
+            }
+
+            topLevel
+                .sortedByDescending { it.timestamp } // newest threads first
+                .map { root ->
+                    com.neo.data.model.CommentThread(
+                        comment = root,
+                        replies = (repliesByRoot[root.id] ?: emptyList())
+                            .sortedBy { it.timestamp } // oldest reply first within a thread
+                    )
+                }
+        }
+
     fun hasUserLikedPostFlow(postId: String) =
         reactionRepository.hasUserReactedFlow(postId, cryptoManager.getDeviceId(), ReactionType.LIKE)
 
@@ -121,16 +190,6 @@ class PostDetailViewModel @Inject constructor(
                 onSuccess = {
                     _uiState.value = UiState.Success("Comment created")
                     onSuccess()
-                    notificationRepository.insert(
-                        Notification(
-                            id = UUID.randomUUID().toString(),
-                            type = "comment",
-                            message = "You commented on a post",
-                            postId = postId,
-                            authorName = authorName,
-                            timestamp = System.currentTimeMillis()
-                        )
-                    )
                 },
                 onFailure = { error ->
                     _uiState.value = UiState.Error(error.message ?: "Failed to create comment")
@@ -156,20 +215,7 @@ class PostDetailViewModel @Inject constructor(
             }
 
             result.fold(
-                onSuccess = {
-                    if (!hasLiked) {
-                        notificationRepository.insert(
-                            Notification(
-                                id = UUID.randomUUID().toString(),
-                                type = "like",
-                                message = "$userName liked a post",
-                                postId = postId,
-                                authorName = userName,
-                                timestamp = System.currentTimeMillis()
-                            )
-                        )
-                    }
-                },
+                onSuccess = { },
                 onFailure = { error ->
                     onError(error.message ?: "Failed to update like")
                 }

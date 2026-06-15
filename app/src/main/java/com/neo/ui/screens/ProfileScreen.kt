@@ -25,10 +25,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -50,6 +46,7 @@ import com.neo.ui.viewmodel.ProfileViewModel
 @Composable
 fun ProfileScreen(
     viewModel: ProfileViewModel,
+    postDetailViewModel: com.neo.ui.viewmodel.PostDetailViewModel,
     onBack: () -> Unit,
     onEditProfile: () -> Unit = {},
     onPostClick: (String) -> Unit = {},
@@ -62,8 +59,13 @@ fun ProfileScreen(
     val handle by viewModel.handle.collectAsState()
     val postCount by viewModel.postCount.collectAsState()
     val nodeCount by viewModel.connectedPeersCount.collectAsState()
+    val followerCount by viewModel.followerCount.collectAsState()
+    val isFollowing by viewModel.isFollowing.collectAsState()
+    val isFollowLoading by viewModel.isFollowLoading.collectAsState()
     val userPosts by viewModel.userPosts.collectAsState()
     val savedPosts by viewModel.savedPosts.collectAsState()
+    val savedPostIds by viewModel.savedPostIds.collectAsState()
+    val currentUserName = viewModel.currentUserName
 
     var selectedTab by remember { mutableIntStateOf(0) }
     var showMenu by remember { mutableStateOf(false) }
@@ -84,6 +86,12 @@ fun ProfileScreen(
         2 -> savedPosts
         else -> emptyList()
     }
+
+    // Like/comment counts + liked state for the visible posts (same source the feed uses).
+    val contentPostIds = contentPosts.map { it.id }
+    val statsMap by remember(contentPostIds) {
+        postDetailViewModel.getPostStatsMapFlow(contentPostIds)
+    }.collectAsState(initial = emptyMap())
 
     GradientBackground(modifier = modifier) {
         LazyColumn(
@@ -127,27 +135,30 @@ fun ProfileScreen(
                             }
                             MaterialTheme(
                                 colorScheme = MaterialTheme.colorScheme.copy(
-                                    surface = NeoDarkGray.copy(alpha = 0.85f)
+                                    surface = SurfaceElevated2
                                 )
                             ) {
                                 DropdownMenu(
                                     expanded = showMenu,
                                     onDismissRequest = { showMenu = false },
                                     modifier = Modifier
-                                        .border(BorderStroke(0.5.dp, GlassBorderMid), RoundedCornerShape(12.dp))
+                                        .clip(NeoShapes.control)
+                                        .background(SurfaceElevated2)
+                                        .border(BorderStroke(0.5.dp, NeoHairline), NeoShapes.control)
                                 ) {
-                                    DropdownMenuItem(
-                                        text = { Text("Edit Profile", color = TextWhite) },
-                                        onClick = {
-                                            showMenu = false
-                                            onEditProfile()
-                                        },
-                                        leadingIcon = {
-                                            Icon(Icons.Default.Edit, null, tint = TextWhite60)
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Share Profile", color = TextWhite) },
+                                    if (isCurrentUser) {
+                                        NeoMenuItem(
+                                            label = "Edit Profile",
+                                            icon = Icons.Default.Edit,
+                                            onClick = {
+                                                showMenu = false
+                                                onEditProfile()
+                                            }
+                                        )
+                                    }
+                                    NeoMenuItem(
+                                        label = "Share Profile",
+                                        icon = Icons.Default.Share,
                                         onClick = {
                                             showMenu = false
                                             val shareIntent = Intent(Intent.ACTION_SEND).apply {
@@ -155,21 +166,16 @@ fun ProfileScreen(
                                                 putExtra(Intent.EXTRA_TEXT, "Check out $profileName on Neo! ${handle}")
                                             }
                                             context.startActivity(Intent.createChooser(shareIntent, "Share profile"))
-                                        },
-                                        leadingIcon = {
-                                            Icon(Icons.Default.Share, null, tint = TextWhite60)
                                         }
                                     )
-                                    DropdownMenuItem(
-                                        text = { Text("Copy Handle", color = TextWhite) },
+                                    NeoMenuItem(
+                                        label = "Copy Handle",
+                                        icon = Icons.Default.ContentCopy,
                                         onClick = {
                                             showMenu = false
                                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                             clipboard.setPrimaryClip(ClipData.newPlainText("handle", handle))
                                             Toast.makeText(context, "Handle copied", Toast.LENGTH_SHORT).show()
-                                        },
-                                        leadingIcon = {
-                                            Icon(Icons.Default.ContentCopy, null, tint = TextWhite60)
                                         }
                                     )
                                 }
@@ -177,123 +183,93 @@ fun ProfileScreen(
                         }
                     }
 
-                    // Profile card — premium liquid glass panel
-                    LiquidGlassSurface(
+                    // Profile card + stats pill. Inner gap matches the parent
+                    // Column's 16dp so card→stats and stats→button margins are equal.
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(24.dp),
-                        fillColor = GlassWhite16,
-                        shadowElevation = 20.dp,
-                        cornerRadius = 72f,
-                        accentGlow = Color.Transparent  // No green tint — pure glass
+                        verticalArrangement = Arrangement.spacedBy(NeoSpacing.lg)
                     ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(24.dp)
+                        NeoElevatedCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = NeoShapes.cardLarge,
+                            tone = SurfaceElevated1,
+                            elevation = NeoElevation.medium
                         ) {
-                            Box(
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
-                                    .size(100.dp)
-                                    .shadow(
-                                        elevation = 12.dp,
-                                        shape = CircleShape,
-                                        ambientColor = NeoLimeGlow20,
-                                        spotColor = NeoLimeGlow20
-                                    )
-                                    .clip(CircleShape)
-                                    .border(2.5.dp, NeoLime, CircleShape)
-                                    .padding(3.dp)
-                                    .clip(CircleShape)
-                                    .background(NeoGray800, CircleShape),
-                                contentAlignment = Alignment.Center
+                                    .fillMaxWidth()
+                                    .padding(NeoSpacing.xxl)
                             ) {
-                                if (profileImageUri != null) {
-                                    Image(
-                                        painter = rememberAsyncImagePainter(model = profileImageUri),
-                                        contentDescription = "Profile",
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                } else {
-                                    Image(
-                                        painter = painterResource(id = R.drawable.splash),
-                                        contentDescription = "Profile",
-                                        modifier = Modifier.size(60.dp)
+                                Box(
+                                    modifier = Modifier
+                                        .size(100.dp)
+                                        .clip(CircleShape)
+                                        .background(NeoLime, CircleShape)
+                                        .organicPattern(NeoLime, richness = 2, intensity = 0.8f)
+                                        .padding(4.dp)
+                                        .clip(CircleShape)
+                                        .background(SurfaceElevated1, CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    UserAvatar(
+                                        imageUri = profileImageUri,
+                                        size = 92.dp,
+                                        contentDescription = "Profile"
                                     )
                                 }
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text(
+                                    text = profileName,
+                                    color = TextWhite,
+                                    fontSize = 24.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = handle,
+                                    color = NeoLime,
+                                    fontSize = 14.sp
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = profileBio,
+                                    color = TextWhite60,
+                                    fontSize = 14.sp,
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                )
                             }
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Text(
-                                text = profileName,
-                                color = TextWhite,
-                                fontSize = 24.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = handle,
-                                color = NeoLime,
-                                fontSize = 14.sp
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = profileBio,
-                                color = TextWhite60,
-                                fontSize = 14.sp,
-                                modifier = Modifier.padding(horizontal = 16.dp)
-                            )
                         }
-                    }
 
-                    // Stats row — liquid glass
-                    LiquidGlassCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(18.dp),
-                        fillColor = GlassWhite12,
-                        shadowElevation = 8.dp,
-                        cornerRadius = 54f
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 16.dp),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            StatItem(label = "PULSES", value = postCount.toString())
-                            Box(modifier = Modifier.width(1.dp).height(32.dp).background(GlassBorderMid))
-                            StatItem(label = "NODES", value = nodeCount.toString())
-                            Box(modifier = Modifier.width(1.dp).height(32.dp).background(GlassBorderMid))
-                            StatItem(label = "FOLLOWERS", value = "0")
-                        }
-                    }
-
-                    // Establish Link button
-                    Button(
-                        onClick = onEditProfile,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .shadow(
-                                elevation = 12.dp,
-                                shape = RoundedCornerShape(50.dp),
-                                ambientColor = NeoLimeGlow20,
-                                spotColor = NeoLimeGlow20
-                            ),
-                        shape = RoundedCornerShape(50.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = NeoLime)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Link,
-                            contentDescription = null,
-                            tint = NeoBlack,
-                            modifier = Modifier.size(18.dp)
+                        // Unified stat-pill container — supporting profile metadata.
+                        ProfileStatStrip(
+                            pulses = postCount,
+                            nodes = nodeCount,
+                            followers = followerCount
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
+                    }
+
+                    if (isCurrentUser) {
+                        // Establish Link button (own profile only)
+                        NeoPrimaryButton(
                             text = "Establish Link",
-                            color = NeoBlack,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold
+                            icon = Icons.Default.Link,
+                            onClick = onEditProfile,
+                            fillMaxWidth = true
+                        )
+                    } else if (isFollowing) {
+                        NeoSecondaryButton(
+                            text = if (isFollowLoading) "Updating…" else "Following",
+                            icon = Icons.Default.Check,
+                            onClick = { if (!isFollowLoading) viewModel.toggleFollow() },
+                            fillMaxWidth = true
+                        )
+                    } else {
+                        NeoPrimaryButton(
+                            text = if (isFollowLoading) "Updating…" else "Follow",
+                            icon = Icons.Default.PersonAdd,
+                            onClick = { if (!isFollowLoading) viewModel.toggleFollow() },
+                            enabled = !isFollowLoading,
+                            fillMaxWidth = true
                         )
                     }
                 }
@@ -378,33 +354,32 @@ fun ProfileScreen(
                     )
                 }
             } else {
-                val chunked = contentPosts.chunked(2)
+                // Same full social post card as the main feed — no grids/galleries.
                 items(
-                    count = chunked.size,
-                    key = { index -> "${selectedTab}_row_$index" }
+                    count = contentPosts.size,
+                    key = { index -> "${selectedTab}_${contentPosts[index].id}" }
                 ) { index ->
-                    val row = chunked[index]
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        row.forEach { post ->
-                            PostGridItem(
-                                post = post,
-                                onClick = { onPostClick(post.id) },
-                                onRemoveSaved = if (selectedTab == 2) {
-                                    { viewModel.toggleSave(post.id) }
-                                } else null,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                        if (row.size == 1) {
-                            Spacer(Modifier.weight(1f))
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
+                    val post = contentPosts[index]
+                    val stats = statsMap[post.id] ?: com.neo.ui.viewmodel.PostStats()
+                    EnhancedPostCard(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        post = post,
+                        onImageClick = { onPostClick(post.id) },
+                        onAuthorClick = { onPostClick(post.id) },
+                        onLikeClick = {
+                            postDetailViewModel.toggleLike(post.id, currentUserName)
+                        },
+                        onCommentClick = { onPostClick(post.id) },
+                        onSaveClick = { viewModel.toggleSave(post.id) },
+                        isLiked = stats.hasLiked,
+                        isSaved = post.id in savedPostIds,
+                        likeCount = stats.likeCount,
+                        commentCount = stats.commentCount,
+                        // All posts on a profile belong to that profile's owner, so
+                        // their avatar is the profile image already resolved above.
+                        authorImageUri = profileImageUri
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
 
                 // Bottom spacer for tab bar clearance
@@ -414,120 +389,134 @@ fun ProfileScreen(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+/**
+ * Unified statistics container — a single compact pill with three equal segments
+ * (Pulses · Nodes · Followers) separated by subtle dividers. Supporting profile
+ * metadata, styled to match the Neo Mesh design system (elevated surface, organic
+ * pattern, lime accent on the primary metric).
+ */
 @Composable
-private fun PostGridItem(
-    post: Post,
-    onClick: () -> Unit = {},
-    onRemoveSaved: (() -> Unit)? = null,
+private fun ProfileStatStrip(
+    pulses: Int,
+    nodes: Int,
+    followers: Int,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
-    val imagePath = post.imageHash?.let {
-        java.io.File(context.filesDir, "images/$it.jpg").takeIf { f -> f.exists() }
-    }
-
-    var showMenu by remember { mutableStateOf(false) }
-
-    Card(
-        modifier = modifier
-            .aspectRatio(1f)
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = if (onRemoveSaved != null) {{ showMenu = true }} else null
-            ),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = NeoGray800)
+    NeoCard(
+        modifier = modifier.fillMaxWidth(),
+        shape = NeoShapes.pill,
+        tone = SurfaceElevated2,
+        elevation = NeoElevation.medium
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            if (imagePath != null) {
-                Image(
-                    painter = rememberAsyncImagePainter(model = imagePath),
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = post.content.take(80),
-                        color = TextWhite60,
-                        fontSize = 12.sp,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-
-            if (onRemoveSaved != null) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(4.dp)
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(NeoBlack.copy(alpha = 0.6f))
-                        .combinedClickable(
-                            onClick = { showMenu = true },
-                            onLongClick = null
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Bookmark,
-                        contentDescription = "Saved",
-                        tint = NeoLime,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-
-                MaterialTheme(
-                    colorScheme = MaterialTheme.colorScheme.copy(
-                        surface = NeoDarkGray.copy(alpha = 0.85f)
-                    )
-                ) {
-                    DropdownMenu(
-                        expanded = showMenu,
-                        onDismissRequest = { showMenu = false },
-                        modifier = Modifier
-                            .border(BorderStroke(0.5.dp, GlassBorderMid), RoundedCornerShape(12.dp))
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Remove", color = TextWhite) },
-                            onClick = {
-                                showMenu = false
-                                onRemoveSaved()
-                            },
-                            leadingIcon = {
-                                Icon(Icons.Default.BookmarkBorder, contentDescription = null, tint = TextWhite60)
-                            }
-                        )
-                    }
-                }
-            }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min)
+                .padding(vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            StatSegment(
+                icon = Icons.Default.Bolt,
+                value = pulses.toString(),
+                label = "Pulses",
+                accent = true,
+                modifier = Modifier.weight(1f)
+            )
+            StatDivider()
+            StatSegment(
+                icon = Icons.Default.Hub,
+                value = nodes.toString(),
+                label = "Nodes",
+                accent = false,
+                modifier = Modifier.weight(1f)
+            )
+            StatDivider()
+            StatSegment(
+                icon = Icons.Default.People,
+                value = followers.toString(),
+                label = "Followers",
+                accent = false,
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
 
+/**
+ * A Neo-styled dropdown menu row — lime leading icon, white label, consistent
+ * spacing. Used for the profile overflow menu so it reads native to the app.
+ */
 @Composable
-private fun StatItem(
+private fun NeoMenuItem(
     label: String,
+    icon: ImageVector,
+    onClick: () -> Unit
+) {
+    DropdownMenuItem(
+        text = {
+            Text(
+                label,
+                color = TextWhite,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium
+            )
+        },
+        onClick = onClick,
+        leadingIcon = {
+            Icon(icon, contentDescription = null, tint = NeoLime, modifier = Modifier.size(20.dp))
+        },
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)
+    )
+}
+
+@Composable
+private fun StatSegment(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
     value: String,
+    label: String,
+    accent: Boolean,
     modifier: Modifier = Modifier
 ) {
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(2.dp)
+        verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
-        Text(text = value, color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Text(text = label, color = TextWhite40, fontSize = 11.sp, letterSpacing = 0.5.sp)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (accent) NeoLime else TextWhite60,
+                modifier = Modifier.size(14.dp)
+            )
+            Text(
+                text = value,
+                color = if (accent) NeoLime else TextWhite,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Text(
+            text = label,
+            color = TextWhite40,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 0.3.sp
+        )
     }
+}
+
+@Composable
+private fun StatDivider() {
+    Box(
+        modifier = Modifier
+            .width(1.dp)
+            .height(28.dp)
+            .background(NeoHairline)
+    )
 }
 
 @Composable

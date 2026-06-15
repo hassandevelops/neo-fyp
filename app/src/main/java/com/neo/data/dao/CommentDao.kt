@@ -33,6 +33,14 @@ interface CommentDao {
      */
     @Query("SELECT * FROM comments WHERE parentCommentId = :parentCommentId ORDER BY timestamp ASC")
     fun getRepliesForComment(parentCommentId: String): Flow<List<Comment>>
+
+    /**
+     * Get every comment (top-level + replies) for a post in one stream.
+     * Used to build threaded views in a single subscription instead of
+     * one Flow per comment.
+     */
+    @Query("SELECT * FROM comments WHERE postId = :postId ORDER BY timestamp ASC")
+    fun getAllCommentsForPost(postId: String): Flow<List<Comment>>
     
     /**
      * Get a specific comment by ID.

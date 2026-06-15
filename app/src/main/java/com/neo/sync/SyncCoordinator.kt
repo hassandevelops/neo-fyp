@@ -88,6 +88,7 @@ class SyncCoordinator @Inject constructor(
                         imageSize = payload.imageSize,
                         imageWidth = payload.imageWidth,
                         imageHeight = payload.imageHeight,
+                        locationName = payload.locationName,
                         timestamp = event.timestamp,
                         signature = postSignature,
                         publicKey = postPublicKey,
@@ -139,6 +140,7 @@ class SyncCoordinator @Inject constructor(
         val imageWidth: Int? = null,
         val imageHeight: Int? = null,
         val imageData: String? = null,
+        val locationName: String? = null,
         val ttl: Int = 7,
         val signature: String? = null,
         val publicKey: String? = null

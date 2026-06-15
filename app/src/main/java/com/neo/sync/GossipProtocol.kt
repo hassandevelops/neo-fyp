@@ -13,16 +13,21 @@ import com.neo.data.model.Post
 import com.neo.data.repository.BlockedUserRepository
 import com.neo.data.repository.CommentRepository
 import com.neo.data.repository.DeviceRepository
+import com.neo.data.repository.NotificationRepository
 import com.neo.data.repository.PostRepository
 import com.neo.data.repository.ReactionRepository
+import com.neo.data.repository.PeerProfileRepository
+import com.neo.data.repository.FollowRepository
+import com.neo.data.preferences.UserPreferences
 import com.neo.di.ApplicationScope
 import com.neo.domain.port.ISyncPort
+import com.neo.media.AvatarStore
 import com.neo.media.ImageChunker
 import com.neo.media.ImageFileStore
 import com.neo.security.CryptoManager
+import com.neo.security.IdentityManager
 import com.neo.security.RateLimiter
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -31,6 +36,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
 import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -47,6 +53,12 @@ class GossipProtocol @Inject constructor(
     private val blockedUserRepository: BlockedUserRepository,
     private val commentRepository: CommentRepository,
     private val reactionRepository: ReactionRepository,
+    private val notificationRepository: NotificationRepository,
+    private val peerProfileRepository: PeerProfileRepository,
+    private val followRepository: FollowRepository,
+    private val userPreferences: UserPreferences,
+    private val avatarStore: AvatarStore,
+    private val identityManager: IdentityManager,
     private val ackManager: AckManager,
     private val conflictResolver: ConflictResolver,
     private val seenMessageCache: SeenMessageCache,
@@ -58,7 +70,10 @@ class GossipProtocol @Inject constructor(
     companion object {
         private const val TAG = "GossipProtocol"
         private const val INITIAL_TTL = 7
-        private const val CHUNK_DELAY_MS = 100L // Delay between chunks to avoid congestion
+        // Max image chunks pending-acked at once per peer. Caps concurrent
+        // AckManager retry coroutines and BLE sendMutex contention while still
+        // keeping the pipe full; layered on top of frame-level back-pressure.
+        private const val IMAGE_SEND_WINDOW = 4
     }
 
     private var bluetoothService: BluetoothService? = null
@@ -68,6 +83,9 @@ class GossipProtocol @Inject constructor(
     private val _btPeers = MutableStateFlow<List<String>>(emptyList())
     private val _internetPeers = MutableStateFlow<List<String>>(emptyList())
     private var blockedUserIds: Set<String> = emptySet()
+    // Cache completed image data whose post hasn't arrived yet (race condition fix).
+    // Key: postId, Value: (imageHash, imageBytes)
+    private val pendingImages = mutableMapOf<String, Pair<String, ByteArray>>()
 
     override val connectedPeersCount: StateFlow<Int> = combine(_btPeers, _internetPeers) { bt, inet -> (bt + inet).distinct() }
         .map { it.size }
@@ -122,13 +140,14 @@ class GossipProtocol @Inject constructor(
         val internetPeers = libP2pService?.getConnectedPeerAddresses() ?: emptyList()
         val peerAddresses = (btPeers + internetPeers).distinct()
 
-        Log.d(TAG, "broadcastPost called. Connected peers: ${peerAddresses.size} (bt=${btPeers.size}, internet=${internetPeers.size})")
+        Log.e(TAG, "broadcastPost: post=${post.id} peers=${peerAddresses.size} bt=${btPeers.size} inet=${internetPeers.size} btSvc=${bluetoothService != null} libp2pSvc=${libP2pService != null}")
+        Log.e(TAG, "broadcastPost: btPeers=$btPeers inetPeers=$internetPeers")
         if (peerAddresses.isEmpty()) {
-            Log.w(TAG, "No peers available for broadcasting — post ${post.id} saved locally, will sync on next peer connect")
+            Log.e(TAG, "broadcastPost: NO PEERS — post ${post.id} saved locally, will sync on next peer connect")
         }
 
         val message = buildPostBroadcast(post)
-        Log.d(TAG, "broadcastPost: sending post ${post.id} (authorId=${post.authorId.take(20)}...) to ${peerAddresses.size} peers: ${peerAddresses.joinToString { it.take(8) }}")
+        Log.e(TAG, "broadcastPost: sending post ${post.id} to ${peerAddresses.size} peers")
         for (peerAddress in peerAddresses) {
             ackManager.sendWithAck(
                 messageId = post.id,
@@ -136,21 +155,36 @@ class GossipProtocol @Inject constructor(
                 peerAddress = peerAddress,
                 sendFunction = { msg, addr ->
                     if (internetPeers.contains(addr)) {
-                        libP2pService?.sendMessage(addr, msg) ?: false
+                        val sent = libP2pService?.sendMessage(addr, msg) ?: false
+                        Log.e(TAG, "broadcastPost: send via libp2p to $addr result=$sent")
+                        sent
                     } else {
-                        bluetoothService?.sendMessage(addr, msg) ?: false
+                        val svcAvail = bluetoothService != null
+                        val sent = bluetoothService?.sendMessage(addr, msg) ?: false
+                        Log.e(TAG, "broadcastPost: send via BLE to $addr result=$sent svcAvail=$svcAvail")
+                        sent
                     }
-                }
+                },
+                onSuccess = {
+                    Log.e(TAG, "broadcastPost: ACK received for ${post.id} from $peerAddress")
+                    // Start the heavy image stream only AFTER the post is
+                    // confirmed delivered to this peer — so the text lands first
+                    // and the stream can't starve the post's own delivery.
+                    if (post.imageHash != null) {
+                        scope.launch { sendImageChunksToPeer(post, peerAddress) }
+                    }
+                },
+                onFailure = { err -> Log.e(TAG, "broadcastPost: FAILED for ${post.id} to $peerAddress: $err") }
             )
         }
-        Log.d(TAG, "Broadcasted post ${post.id} to ${peerAddresses.size} peers")
+        Log.e(TAG, "Broadcasted post ${post.id} to ${peerAddresses.size} peers")
 
-        // Also publish to GossipSub for WAN mesh distribution
+        // Also publish to GossipSub for WAN mesh distribution. The Go binary's
+        // GossipSub layer handles fanout to all subscribed peers, including
+        // those reached through IPFS AutoRelay for NAT'd devices.
         scope.launch {
-            libP2pNode?.publishToTopic(message)
+            libP2pNode?.publishToGossipSub(message)
         }
-        // Image is now embedded inside the PostBroadcast message (imageData field).
-        // No separate chunked broadcast needed.
     }
 
     /**
@@ -173,12 +207,15 @@ class GossipProtocol @Inject constructor(
             },
             onSuccess = {
                 Log.d(TAG, "Rebroadcasted post ${post.id} to new peer $peerAddress")
+                // Send image chunks only after the post itself is acked.
+                if (post.imageHash != null) {
+                    scope.launch { sendImageChunksToPeer(post, peerAddress) }
+                }
             },
             onFailure = { error ->
                 Log.w(TAG, "Failed to rebroadcast post ${post.id} to $peerAddress: $error")
             }
         )
-        // Image is embedded in PostBroadcast; no separate chunked send required.
     }
 
     /**
@@ -226,56 +263,78 @@ class GossipProtocol @Inject constructor(
     }
     
     /**
-     * Broadcast image data for a post.
+     * Reliably send a post's image to a single peer as chunked messages.
+     *
+     * Unlike the old fire-and-forget broadcast, every ImageMetadata/ImageChunk
+     * goes through [ackManager] (retried until the peer acks it), so a transient
+     * frame loss or brief disconnect no longer silently loses the whole image.
+     * A bounded send window keeps at most [IMAGE_SEND_WINDOW] chunks in flight at
+     * once, capping retry-coroutine fan-out and BLE sendMutex contention while
+     * still keeping the pipe full. Called only after the post itself was acked.
      */
-    private suspend fun broadcastImage(post: Post) {
+    private suspend fun sendImageChunksToPeer(post: Post, peerAddress: String) {
         val imageHash = post.imageHash ?: return
-
-        Log.d(TAG, "broadcastImage: starting for post ${post.id}, hash=$imageHash")
-
-        // Load image from file store
         val imageData = imageFileStore.load(imageHash) ?: run {
             Log.w(TAG, "Image not found in file store: $imageHash")
             return
         }
 
-        Log.d(TAG, "broadcastImage: loaded ${imageData.size} bytes from file store")
-
-        // Encode to Base64 first so we know the actual chunk count
         val encodedImageData = Base64.encodeToString(imageData, Base64.NO_WRAP)
-        val chunker = ImageChunker()
-        val actualTotalChunks = (encodedImageData.length + ImageChunker.CHUNK_SIZE - 1) / ImageChunker.CHUNK_SIZE
+        val chunks = ImageChunker().chunkImage(encodedImageData, post.id)
+        val totalChunks = chunks.size
 
-        // Send metadata first
-        val metadata = Message.ImageMetadata(
-            postId = post.id,
-            imageHash = imageHash,
-            totalSize = post.imageSize ?: 0,
-            totalChunks = actualTotalChunks,
-            width = post.imageWidth ?: 0,
-            height = post.imageHeight ?: 0
-        )
-        bluetoothService?.broadcastMessage(metadata)
-        libP2pService?.broadcastMessage(metadata)
-        Log.d(TAG, "Sent image metadata for post ${post.id}: $actualTotalChunks chunks, ${post.imageSize ?: 0} bytes")
-
-        // Chunk and send image data
-        val chunks = chunker.chunkImage(encodedImageData, post.id)
-
-        for (chunk in chunks) {
-            val chunkMessage = Message.ImageChunk(
-                postId = chunk.postId,
-                chunkIndex = chunk.chunkIndex,
-                totalChunks = chunk.totalChunks,
-                data = chunk.data,
-                checksum = chunk.checksum
-            )
-            bluetoothService?.broadcastMessage(chunkMessage)
-            libP2pService?.broadcastMessage(chunkMessage)
-            delay(CHUNK_DELAY_MS) // Small delay to avoid congestion
+        val isInternetPeer = libP2pService?.getConnectedPeerAddresses()?.contains(peerAddress) == true
+        val sendVia: suspend (Message, String) -> Boolean = { msg, addr ->
+            if (isInternetPeer) {
+                libP2pService?.sendMessage(addr, msg) ?: false
+            } else {
+                bluetoothService?.sendMessage(addr, msg) ?: false
+            }
         }
 
-        Log.d(TAG, "Sent ${chunks.size} image chunks for post ${post.id}")
+        // Metadata: sent reliably for symmetry/logging, but assembly does not
+        // depend on it (chunks carry their own postId/totalChunks), so we don't
+        // gate the chunk stream on its ack.
+        ackManager.sendWithAck(
+            messageId = "${post.id}:img:meta",
+            message = Message.ImageMetadata(
+                postId = post.id,
+                imageHash = imageHash,
+                totalSize = post.imageSize ?: 0,
+                totalChunks = totalChunks,
+                width = post.imageWidth ?: 0,
+                height = post.imageHeight ?: 0
+            ),
+            peerAddress = peerAddress,
+            sendFunction = sendVia
+        )
+        Log.d(TAG, "sendImageChunksToPeer: post=${post.id} to $peerAddress, $totalChunks chunks")
+
+        // Windowed reliable chunk send.
+        val window = Semaphore(IMAGE_SEND_WINDOW)
+        for (chunk in chunks) {
+            window.acquire()
+            ackManager.sendWithAck(
+                messageId = "${post.id}:img:${chunk.chunkIndex}",
+                message = Message.ImageChunk(
+                    postId = chunk.postId,
+                    chunkIndex = chunk.chunkIndex,
+                    totalChunks = chunk.totalChunks,
+                    data = chunk.data,
+                    checksum = chunk.checksum
+                ),
+                peerAddress = peerAddress,
+                sendFunction = sendVia,
+                onSuccess = { window.release() },
+                onFailure = { err ->
+                    window.release()
+                    Log.w(TAG, "Image chunk ${chunk.chunkIndex}/$totalChunks failed for post ${post.id} to $peerAddress: $err")
+                }
+            )
+        }
+        // Drain: block until every in-flight chunk has resolved (ack or give-up).
+        repeat(IMAGE_SEND_WINDOW) { window.acquire() }
+        Log.d(TAG, "sendImageChunksToPeer: finished $totalChunks chunks for post ${post.id} to $peerAddress")
     }
     
     /**
@@ -318,6 +377,7 @@ class GossipProtocol @Inject constructor(
                 imageSize = postBroadcast.imageSize,
                 imageWidth = postBroadcast.imageWidth,
                 imageHeight = postBroadcast.imageHeight,
+                locationName = postBroadcast.locationName,
                 timestamp = postBroadcast.timestamp,
                 signature = postBroadcast.signature,
                 publicKey = postBroadcast.publicKey,
@@ -386,6 +446,7 @@ class GossipProtocol @Inject constructor(
             imageSize = postBroadcast.imageSize,
             imageWidth = postBroadcast.imageWidth,
             imageHeight = postBroadcast.imageHeight,
+            locationName = postBroadcast.locationName,
             timestamp = postBroadcast.timestamp,
             signature = postBroadcast.signature,
             publicKey = postBroadcast.publicKey,
@@ -421,6 +482,19 @@ class GossipProtocol @Inject constructor(
 
         Log.d(TAG, "Inserted post ${post.id} from ${post.authorName} into Room DB")
 
+        // If image chunks completed before the post arrived, the completed
+        // image data is cached in pendingImages. Save it now.
+        val cachedImage = pendingImages.remove(post.id)
+        if (cachedImage != null) {
+            val (cachedHash, cachedBytes) = cachedImage
+            if (post.imageHash == null || cachedHash != post.imageHash) {
+                Log.e(TAG, "Pending image hash mismatch for post ${post.id}")
+            } else {
+                Log.d(TAG, "Applying cached image for post ${post.id}")
+                saveImageAndUpdatePost(post, cachedBytes)
+            }
+        }
+
         // Reconstruct EventLog entry so this post is relayable via event sync
         insertEventLogFromBroadcast(postBroadcast)
 
@@ -435,6 +509,10 @@ class GossipProtocol @Inject constructor(
     
     /**
      * Forward a post to all connected peers except the sender.
+     *
+     * If the post was received via GossipSub, do NOT republish it to the
+     * GossipSub topic — that would create an infinite loop. Direct
+     * forwarding to BLE peers is still done.
      */
     private suspend fun forwardPost(post: Post, excludePeerAddress: String) {
         val btPeers = bluetoothService?.getConnectedPeerAddresses() ?: emptyList()
@@ -442,7 +520,7 @@ class GossipProtocol @Inject constructor(
         val allPeers = (btPeers + internetPeers).distinct()
         val peerAddresses = allPeers.filter { it != excludePeerAddress }
 
-        if (peerAddresses.isEmpty()) {
+        if (peerAddresses.isEmpty() && !excludePeerAddress.startsWith("gossipsub:")) {
             Log.w(TAG, "No peers available for forwarding post")
             return
         }
@@ -465,6 +543,8 @@ class GossipProtocol @Inject constructor(
             imageSize = post.imageSize,
             imageWidth = post.imageWidth,
             imageHeight = post.imageHeight,
+            imageData = null, // image sent separately via ImageChunks
+            locationName = post.locationName,
             eventId = post.eventId ?: "",
             authorDid = post.authorDid ?: "",
             sequenceNum = post.sequenceNum ?: 0L,
@@ -487,7 +567,7 @@ class GossipProtocol @Inject constructor(
                 }
             )
         }
-        Log.d(TAG, "Forwarded post ${post.id} with TTL=$newTtl to ${peerAddresses.size} peers")
+        Log.d(TAG, "Forwarded post ${post.id} with TTL=$newTtl to ${peerAddresses.size} peers (via ${if (excludePeerAddress.startsWith("gossipsub:")) "gossipsub origin" else "direct"})")
     }
 
     /**
@@ -569,13 +649,13 @@ class GossipProtocol @Inject constructor(
     }
     
     private suspend fun buildPostBroadcast(post: Post): Message.PostBroadcast {
-        // Embed image data directly if available (sender has the file).
-        // The receiver saves it as part of post processing — no separate chunk stream needed.
-        val imageData: String? = if (post.imageHash != null) {
-            imageFileStore.load(post.imageHash)?.let { bytes ->
-                android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-            }
-        } else null
+        // Image data is NEVER embedded in PostBroadcast. It is sent separately
+        // as small ImageChunk messages, each fitting in a single GATT frame.
+        // Embedding Base64 image data (~135KB) causes the GATT write buffer
+        // to overflow and all subsequent messages to be silently dropped.
+        val imageData: String? = null
+
+        Log.e(TAG, "buildPostBroadcast: post=${post.id} imageHash=${post.imageHash} hasLocalFile=${post.imageHash != null && imageFileStore.load(post.imageHash) != null}")
 
         return Message.PostBroadcast(
             id = post.id,
@@ -592,6 +672,7 @@ class GossipProtocol @Inject constructor(
             imageWidth = post.imageWidth,
             imageHeight = post.imageHeight,
             imageData = imageData,
+            locationName = post.locationName,
             eventId = post.eventId ?: "",
             authorDid = post.authorDid ?: "",
             sequenceNum = post.sequenceNum ?: 0L,
@@ -646,37 +727,37 @@ class GossipProtocol @Inject constructor(
         val completeImageData = chunkAssemblyManager.addChunk(imageChunk)
 
         if (completeImageData != null) {
-            // All chunks received, save to file store
             Log.d(TAG, "Image assembly COMPLETE for post ${chunk.postId}")
 
-            // Get the existing post to get the imageHash
+            val imageBytes = Base64.decode(completeImageData, Base64.NO_WRAP)
+            val actualHash = calculateImageHash(imageBytes)
+
             val existingPost = postRepository.getPostById(chunk.postId)
             if (existingPost != null && existingPost.imageHash != null) {
-                // Save image to file store
-                val imageBytes = Base64.decode(completeImageData, Base64.NO_WRAP)
-                val actualHash = calculateImageHash(imageBytes)
                 if (actualHash != existingPost.imageHash) {
-                    Log.e(
-                        TAG,
-                        "Image assembly FAILED for post ${chunk.postId}: hash mismatch! " +
-                            "Expected: ${existingPost.imageHash}, got: $actualHash"
-                    )
+                    Log.e(TAG, "Image assembly FAILED for post ${chunk.postId}: hash mismatch! Expected: ${existingPost.imageHash}, got: $actualHash")
                     return
                 }
-                val savedPath = imageFileStore.save(existingPost.imageHash, imageBytes)
-                if (savedPath != null) {
-                    Log.d(TAG, "Saved image to file store: ${existingPost.imageHash}")
-                    // Bump firstSeenTimestamp so Room invalidates the PagingSource and UI recomposes
-                    postRepository.updatePost(existingPost.copy(firstSeenTimestamp = System.currentTimeMillis()))
-                } else {
-                    Log.w(TAG, "Failed to save image to file store")
-                }
+                saveImageAndUpdatePost(existingPost, imageBytes)
             } else {
-                Log.w(TAG, "Post not found or missing imageHash for post ${chunk.postId}")
+                // Post hasn't arrived yet — cache the image data.
+                // handleReceivedPost will check this cache when the post arrives.
+                Log.w(TAG, "Post ${chunk.postId} not in DB yet, caching completed image (hash=${actualHash.take(16)}...)")
+                pendingImages[chunk.postId] = actualHash to imageBytes
             }
         }
 
         Log.d(TAG, "Image chunk ${chunk.chunkIndex + 1}/${chunk.totalChunks} received for post ${chunk.postId}")
+    }
+
+    private suspend fun saveImageAndUpdatePost(post: com.neo.data.model.Post, imageBytes: ByteArray) {
+        val savedPath = imageFileStore.save(post.imageHash!!, imageBytes)
+        if (savedPath != null) {
+            Log.d(TAG, "Saved image to file store: ${post.imageHash}")
+            postRepository.updatePost(post.copy(firstSeenTimestamp = System.currentTimeMillis()))
+        } else {
+            Log.w(TAG, "Failed to save image to file store")
+        }
     }
 
     private fun calculateImageHash(data: ByteArray): String {
@@ -701,6 +782,78 @@ class GossipProtocol @Inject constructor(
      * Handle received comment from a peer.
      * Verifies signature and stores if valid.
      */
+    @Volatile private var cachedLocalDid: String? = null
+
+    /** The local user's DID (used to detect posts they authored). Cached after first lookup. */
+    private suspend fun localDid(): String {
+        cachedLocalDid?.let { return it }
+        return try {
+            identityManager.getOrCreateIdentity().did.also { cachedLocalDid = it }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not resolve local DID for notifications: ${e.message}")
+            ""
+        }
+    }
+
+    private suspend fun insertNotification(
+        type: String,
+        message: String,
+        postId: String?,
+        actorName: String,
+        targetUserId: String? = null,
+        actorId: String? = null
+    ) {
+        notificationRepository.insert(
+            com.neo.data.model.Notification(
+                id = java.util.UUID.randomUUID().toString(),
+                type = type,
+                message = message,
+                postId = postId,
+                authorName = actorName,
+                timestamp = System.currentTimeMillis(),
+                targetUserId = targetUserId,
+                actorId = actorId
+            )
+        )
+    }
+
+    /**
+     * Emit a notification when an incoming comment targets the local user's content:
+     * a reply to one of their comments, or a top-level comment on one of their posts.
+     * Comments use the device id as authorId; posts are authored under the local DID.
+     */
+    private suspend fun notifyForIncomingComment(comment: com.neo.data.model.Comment, post: com.neo.data.model.Post) {
+        try {
+            val myDeviceId = cryptoManager.getDeviceId()
+            if (comment.authorId == myDeviceId) return // never notify for our own echoes
+            val actor = comment.authorName
+
+            if (comment.parentCommentId != null) {
+                val parent = commentRepository.getCommentById(comment.parentCommentId)
+                if (parent != null && parent.authorId == myDeviceId) {
+                    insertNotification("reply", "$actor replied to your comment", comment.postId, actor)
+                }
+            } else if (post.authorId == localDid()) {
+                insertNotification("comment", "$actor commented on your post", comment.postId, actor)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to create comment notification: ${e.message}")
+        }
+    }
+
+    /** Emit a notification when someone likes a post the local user authored. */
+    private suspend fun notifyForIncomingReaction(reaction: com.neo.data.model.Reaction, post: com.neo.data.model.Post) {
+        try {
+            val myDeviceId = cryptoManager.getDeviceId()
+            if (reaction.userId == myDeviceId) return
+            if (reaction.type == com.neo.data.model.ReactionType.LIKE && post.authorId == localDid()) {
+                insertNotification("like", "${reaction.userName} liked your post", reaction.postId, reaction.userName)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to create reaction notification: ${e.message}")
+        }
+    }
+
     suspend fun handleReceivedComment(
         commentBroadcast: Message.CommentBroadcast,
         fromPeerAddress: String
@@ -785,7 +938,10 @@ class GossipProtocol @Inject constructor(
         // Store comment
         commentRepository.insertComment(comment)
         Log.i(TAG, "Stored comment ${comment.id} on post ${comment.postId}")
-        
+
+        // Notify the local user when an incoming comment targets their content.
+        notifyForIncomingComment(comment, post)
+
         // Propagate to other peers if TTL > 0
         if (comment.ttl > 0) {
             val decrementedComment = comment.copy(ttl = comment.ttl - 1)
@@ -934,7 +1090,10 @@ class GossipProtocol @Inject constructor(
         // Store reaction
         reactionRepository.insertReaction(reaction)
         Log.i(TAG, "Stored reaction ${reaction.id} on post ${reaction.postId}")
-        
+
+        // Notify the local user when someone likes a post they authored.
+        notifyForIncomingReaction(reaction, post)
+
         // Propagate to other peers if TTL > 0
         if (reaction.ttl > 0) {
             val decrementedReaction = reaction.copy(ttl = reaction.ttl - 1)
@@ -955,4 +1114,284 @@ class GossipProtocol @Inject constructor(
     ): String {
         return "$id|$postId|$userId|$type|$timestamp"
     }
+
+    // ─── Profile sync ────────────────────────────────────────────────────────
+
+    /** Build the signed ProfileBroadcast for the local user's current profile. */
+    private suspend fun buildProfileBroadcast(ttl: Int = INITIAL_TTL): Message.ProfileBroadcast? {
+        val identity = runCatching { identityManager.getOrCreateIdentity() }.getOrNull() ?: return null
+        val updatedAt = userPreferences.profileUpdatedAt
+        val displayName = userPreferences.userName
+        val bio = userPreferences.userBio
+        val thumb = avatarStore.makeThumbnailBase64(userPreferences.profileImageUri)
+        val message = createProfileMessage(identity.did, displayName, bio, updatedAt)
+        val signature = signWithIdentity(message) ?: return null
+        val publicKey = Base64.encodeToString(identity.publicKey.encoded, Base64.NO_WRAP)
+        return Message.ProfileBroadcast(
+            did = identity.did,
+            displayName = displayName,
+            bio = bio,
+            avatarThumbBase64 = thumb,
+            updatedAt = updatedAt,
+            signature = signature,
+            publicKey = publicKey,
+            keyAlgorithm = cryptoManager.getKeyAlgorithmPublic(),
+            ttl = ttl
+        )
+    }
+
+    /** Broadcast the local user's profile to all connected peers (+ GossipSub). */
+    override suspend fun broadcastProfile() {
+        val message = buildProfileBroadcast() ?: return
+        val btPeers = bluetoothService?.getConnectedPeerAddresses() ?: emptyList()
+        val internetPeers = libP2pService?.getConnectedPeerAddresses() ?: emptyList()
+        val peerAddresses = (btPeers + internetPeers).distinct()
+        for (peerAddress in peerAddresses) {
+            sendProfileTo(message, peerAddress, internetPeers)
+        }
+        scope.launch { libP2pNode?.publishToGossipSub(message) }
+        Log.d(TAG, "Broadcasted profile for ${message.did} to ${peerAddresses.size} peers")
+    }
+
+    /** Push the local user's profile to a single newly-connected peer. */
+    suspend fun broadcastProfileToPeer(peerAddress: String) {
+        val message = buildProfileBroadcast() ?: return
+        val internetPeers = libP2pService?.getConnectedPeerAddresses() ?: emptyList()
+        sendProfileTo(message, peerAddress, internetPeers)
+    }
+
+    private suspend fun sendProfileTo(
+        message: Message.ProfileBroadcast,
+        peerAddress: String,
+        internetPeers: List<String>
+    ) {
+        ackManager.sendWithAck(
+            messageId = "${message.did}:profile:${message.updatedAt}",
+            message = message,
+            peerAddress = peerAddress,
+            sendFunction = { msg, addr ->
+                if (internetPeers.contains(addr)) {
+                    libP2pService?.sendMessage(addr, msg) ?: false
+                } else {
+                    bluetoothService?.sendMessage(addr, msg) ?: false
+                }
+            }
+        )
+    }
+
+    /** Handle a received profile broadcast — latest-wins, signature-verified. */
+    suspend fun handleReceivedProfile(
+        profile: Message.ProfileBroadcast,
+        fromPeerAddress: String
+    ) {
+        // Dedup by did:updatedAt so repeated copies of the same version are ignored.
+        if (!seenMessageCache.checkAndAdd("${profile.did}:profile:${profile.updatedAt}")) {
+            return
+        }
+
+        // Verify signature against the key encoded in the DID (not the supplied key).
+        val expectedKey = extractPublicKeyFromDid(profile.did)
+        val message = createProfileMessage(profile.did, profile.displayName, profile.bio, profile.updatedAt)
+        val isValid = cryptoManager.verify(
+            message = message,
+            signatureBase64 = profile.signature,
+            publicKeyBase64 = expectedKey,
+            keyAlgorithm = "RSA"
+        )
+        if (!isValid) {
+            Log.w(TAG, "Invalid signature for profile ${profile.did}, rejecting")
+            return
+        }
+
+        // Latest-wins: ignore if we already hold a newer/equal version.
+        val existing = peerProfileRepository.getByDid(profile.did)
+        if (existing != null && existing.updatedAt >= profile.updatedAt) {
+            return
+        }
+
+        val avatarPath = avatarStore.saveAvatar(profile.did, profile.avatarThumbBase64)
+            ?: existing?.avatarPath
+        peerProfileRepository.upsert(
+            com.neo.data.model.PeerProfile(
+                did = profile.did,
+                displayName = profile.displayName,
+                bio = profile.bio,
+                avatarPath = avatarPath,
+                updatedAt = profile.updatedAt
+            )
+        )
+        Log.i(TAG, "Stored profile for ${profile.did} (updatedAt=${profile.updatedAt})")
+
+        // Propagate to other peers if TTL remains.
+        if (profile.ttl > 0) {
+            val decremented = profile.copy(ttl = profile.ttl - 1)
+            val btPeers = bluetoothService?.getConnectedPeerAddresses() ?: emptyList()
+            val internetPeers = libP2pService?.getConnectedPeerAddresses() ?: emptyList()
+            (btPeers + internetPeers).distinct()
+                .filter { it != fromPeerAddress }
+                .forEach { sendProfileTo(decremented, it, internetPeers) }
+        }
+    }
+
+    private fun createProfileMessage(did: String, name: String, bio: String, updatedAt: Long): String =
+        "$did|$name|$bio|$updatedAt"
+
+    // ─── Follow graph ──────────────────────────────────────────────────────────
+
+    override suspend fun broadcastFollow(follow: com.neo.data.model.Follow, followerName: String) {
+        val btPeers = bluetoothService?.getConnectedPeerAddresses() ?: emptyList()
+        val internetPeers = libP2pService?.getConnectedPeerAddresses() ?: emptyList()
+        val peerAddresses = (btPeers + internetPeers).distinct()
+
+        val message = Message.FollowBroadcast(
+            id = follow.id,
+            followerDid = follow.followerDid,
+            followeeDid = follow.followeeDid,
+            followerName = followerName,
+            active = follow.active,
+            timestamp = follow.timestamp,
+            signature = follow.signature,
+            publicKey = follow.publicKey,
+            keyAlgorithm = cryptoManager.getKeyAlgorithmPublic(),
+            ttl = INITIAL_TTL
+        )
+        for (peerAddress in peerAddresses) {
+            sendFollowTo(message, peerAddress, internetPeers)
+        }
+        scope.launch { libP2pNode?.publishToGossipSub(message) }
+        Log.d(TAG, "Broadcasted follow ${follow.id} (active=${follow.active}) to ${peerAddresses.size} peers")
+    }
+
+    /** Re-send the local user's outgoing follow edges to a newly-connected peer. */
+    suspend fun broadcastFollowsToPeer(peerAddress: String) {
+        val myDid = localDid()
+        if (myDid.isEmpty()) return
+        val internetPeers = libP2pService?.getConnectedPeerAddresses() ?: emptyList()
+        val myName = userPreferences.userName
+        followRepository.getOutgoing(myDid).forEach { follow ->
+            val message = Message.FollowBroadcast(
+                id = follow.id,
+                followerDid = follow.followerDid,
+                followeeDid = follow.followeeDid,
+                followerName = myName,
+                active = follow.active,
+                timestamp = follow.timestamp,
+                signature = follow.signature,
+                publicKey = follow.publicKey,
+                keyAlgorithm = cryptoManager.getKeyAlgorithmPublic(),
+                ttl = INITIAL_TTL
+            )
+            sendFollowTo(message, peerAddress, internetPeers)
+        }
+    }
+
+    private suspend fun sendFollowTo(
+        message: Message.FollowBroadcast,
+        peerAddress: String,
+        internetPeers: List<String>
+    ) {
+        ackManager.sendWithAck(
+            messageId = "${message.id}:${message.timestamp}",
+            message = message,
+            peerAddress = peerAddress,
+            sendFunction = { msg, addr ->
+                if (internetPeers.contains(addr)) {
+                    libP2pService?.sendMessage(addr, msg) ?: false
+                } else {
+                    bluetoothService?.sendMessage(addr, msg) ?: false
+                }
+            }
+        )
+    }
+
+    /** Handle a received follow edge — latest-wins, signature-verified. */
+    suspend fun handleReceivedFollow(
+        follow: Message.FollowBroadcast,
+        fromPeerAddress: String
+    ) {
+        if (!seenMessageCache.checkAndAdd("${follow.id}:${follow.timestamp}")) {
+            return
+        }
+        if (follow.followerDid in blockedUserIds) {
+            return
+        }
+
+        val expectedKey = extractPublicKeyFromDid(follow.followerDid)
+        val message = createFollowMessage(
+            follow.id, follow.followerDid, follow.followeeDid, follow.active, follow.timestamp
+        )
+        val isValid = cryptoManager.verify(
+            message = message,
+            signatureBase64 = follow.signature,
+            publicKeyBase64 = expectedKey,
+            keyAlgorithm = "RSA"
+        )
+        if (!isValid) {
+            Log.w(TAG, "Invalid signature for follow ${follow.id}, rejecting")
+            return
+        }
+
+        // Latest-wins on the (follower, followee) edge.
+        val existing = followRepository.getById(follow.id)
+        if (existing != null && existing.timestamp >= follow.timestamp) {
+            return
+        }
+
+        followRepository.upsert(
+            com.neo.data.model.Follow(
+                id = follow.id,
+                followerDid = follow.followerDid,
+                followeeDid = follow.followeeDid,
+                active = follow.active,
+                timestamp = follow.timestamp,
+                signature = follow.signature,
+                publicKey = follow.publicKey
+            )
+        )
+        Log.i(TAG, "Stored follow ${follow.id} (active=${follow.active})")
+
+        // Notify the local user when someone newly follows them.
+        if (follow.active && existing?.active != true && follow.followeeDid == localDid()) {
+            insertNotification(
+                type = "follow",
+                message = "${follow.followerName} started following you",
+                postId = null,
+                actorName = follow.followerName,
+                targetUserId = follow.followerDid,
+                actorId = follow.followerDid
+            )
+        }
+
+        if (follow.ttl > 0) {
+            val decremented = follow.copy(ttl = follow.ttl - 1)
+            val btPeers = bluetoothService?.getConnectedPeerAddresses() ?: emptyList()
+            val internetPeers = libP2pService?.getConnectedPeerAddresses() ?: emptyList()
+            (btPeers + internetPeers).distinct()
+                .filter { it != fromPeerAddress }
+                .forEach { sendFollowTo(decremented, it, internetPeers) }
+        }
+    }
+
+    private fun createFollowMessage(
+        id: String, followerDid: String, followeeDid: String, active: Boolean, timestamp: Long
+    ): String = "$id|$followerDid|$followeeDid|$active|$timestamp"
+
+    // ─── Identity signing helpers (DID-keyed) ───────────────────────────────────
+
+    /** Sign with the identity (DID) private key — RSA SHA-256, matching posts. */
+    private fun signWithIdentity(message: String): String? {
+        return try {
+            val sig = java.security.Signature.getInstance("SHA256withRSA")
+            sig.initSign(identityManager.getPrivateKey())
+            sig.update(message.toByteArray())
+            Base64.encodeToString(sig.sign(), Base64.NO_WRAP)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to sign with identity key: ${e.message}")
+            null
+        }
+    }
+
+    /** Extract the Base64 public key from a "did:key:base64url" string. */
+    private fun extractPublicKeyFromDid(did: String): String =
+        did.removePrefix("did:key:").replace('-', '+').replace('_', '/')
 }

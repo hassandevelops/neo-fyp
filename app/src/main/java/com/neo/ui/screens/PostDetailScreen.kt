@@ -26,8 +26,10 @@ import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
 import com.neo.data.model.Post
 import com.neo.ui.components.CommentsBottomSheet
+import com.neo.ui.components.CommentThreadItem
 import com.neo.ui.components.FullScreenMediaViewer
 import com.neo.ui.components.GradientBackground
+import com.neo.ui.components.UserAvatar
 import com.neo.ui.theme.*
 import androidx.compose.material3.MaterialTheme
 import com.neo.ui.viewmodel.PostDetailViewModel
@@ -51,10 +53,22 @@ fun PostDetailScreen(
     var showCommentsSheet by remember { mutableStateOf(false) }
     val hasLiked by viewModel.hasUserLikedPostFlow(post.id).collectAsState(initial = false)
     val isSaved by viewModel.observeIsSaved(post.id).collectAsState(initial = false)
-    val topLevelComments by viewModel
-        .getTopLevelCommentsForPost(post.id)
+    val commentThreads by viewModel
+        .getCommentThreadsForPost(post.id)
         .collectAsState(initial = emptyList())
     val uiState by viewModel.uiState.collectAsState()
+    val profilesByDid by viewModel.profilesByDid.collectAsState()
+
+    // Resolve a comment author's avatar (deviceId-authored → only self resolves;
+    // others fall back to the default avatar until keyed identities are unified).
+    val commentAvatarFor: (com.neo.data.model.Comment) -> String? = { comment ->
+        com.neo.ui.util.resolveAvatar(
+            authorId = comment.authorId,
+            profiles = profilesByDid,
+            selfIds = viewModel.selfIds,
+            selfImageUri = profileImageUri
+        )
+    }
 
     val imagePath = remember(post.imageHash) {
         post.imageHash?.let {
@@ -131,9 +145,9 @@ fun PostDetailScreen(
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(24.dp),
+                        shape = NeoShapes.card,
                         colors = CardDefaults.cardColors(
-                            containerColor = SurfaceWhite5
+                            containerColor = SurfaceElevated1
                         )
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
@@ -142,30 +156,16 @@ fun PostDetailScreen(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(48.dp)
-                                        .clip(CircleShape)
-                                        .background(SurfaceWhite10),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    val authorImageUri = if (post.authorId == currentUserId) profileImageUri else null
-                                    if (authorImageUri != null) {
-                                        Image(
-                                            painter = rememberAsyncImagePainter(model = authorImageUri),
-                                            contentDescription = "Profile",
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentScale = ContentScale.Crop
-                                        )
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Default.Person,
-                                            contentDescription = null,
-                                            tint = TextWhite60,
-                                            modifier = Modifier.size(24.dp)
-                                        )
-                                    }
-                                }
+                                UserAvatar(
+                                    imageUri = com.neo.ui.util.resolveAvatar(
+                                        authorId = post.authorId,
+                                        profiles = profilesByDid,
+                                        selfIds = viewModel.selfIds,
+                                        selfImageUri = profileImageUri
+                                    ),
+                                    size = 48.dp,
+                                    contentDescription = "Profile"
+                                )
                                 
                                 Column {
                                     Text(
@@ -189,7 +189,7 @@ fun PostDetailScreen(
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
+                                        .clip(NeoShapes.control)
                                         .clickable { selectedImageForViewer = imagePath },
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -279,34 +279,18 @@ fun PostDetailScreen(
                     )
                 }
                 
-                items(topLevelComments.size) { index ->
-                    val comment = topLevelComments[index]
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp),
-                        color = SurfaceWhite5,
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(
-                                text = comment.authorName,
-                                color = NeoLime,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = comment.content,
-                                color = TextWhite,
-                                fontSize = 14.sp
-                            )
-                        }
-                    }
+                items(commentThreads.size) { index ->
+                    val thread = commentThreads[index]
+                    CommentThreadItem(
+                        thread = thread,
+                        avatarFor = commentAvatarFor,
+                        onReply = { showCommentsSheet = true },
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
                 }
-                
+
                 // Empty state if no comments
-                if (topLevelComments.isEmpty()) {
+                if (commentThreads.isEmpty()) {
                     item {
                         Text(
                             text = "No comments yet. Be the first to comment!",
@@ -340,10 +324,12 @@ fun PostDetailScreen(
                             focusedTextColor = TextWhite,
                             unfocusedTextColor = TextWhite,
                             focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = BorderWhite10,
+                            unfocusedBorderColor = NeoHairline,
+                            focusedContainerColor = SurfaceElevated1,
+                            unfocusedContainerColor = SurfaceElevated1,
                             cursorColor = MaterialTheme.colorScheme.primary
                         ),
-                        shape = RoundedCornerShape(16.dp)
+                        shape = NeoShapes.pill
                     )
                     
                     IconButton(
@@ -378,13 +364,8 @@ fun PostDetailScreen(
         if (showCommentsSheet) {
             CommentsBottomSheet(
                 postId = post.id,
-                topLevelComments = topLevelComments,
-                getReplies = { parentId ->
-                    viewModel
-                        .getRepliesForComment(parentId)
-                        .collectAsState(initial = emptyList())
-                        .value
-                },
+                threads = commentThreads,
+                avatarFor = commentAvatarFor,
                 onDismiss = { showCommentsSheet = false },
                 onCommentSubmit = { content, parentCommentId ->
                     viewModel.createComment(

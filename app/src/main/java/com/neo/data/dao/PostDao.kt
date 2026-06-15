@@ -109,6 +109,17 @@ interface PostDao {
     @Query("SELECT COUNT(*) FROM posts WHERE authorId = :authorId")
     fun getPostCountForAuthor(authorId: String): Flow<Int>
 
+    /**
+     * Reactive post count matching any of [authorIds] (excludes tombstoned posts).
+     * Used for the profile "Pulses" metric, where the local user is identified by
+     * BOTH their did:key (how posts are stored) and their legacy deviceId.
+     */
+    @Query("SELECT COUNT(*) FROM posts WHERE authorId IN (:authorIds) AND isDeleted = 0")
+    fun getPostCountForAuthors(authorIds: List<String>): Flow<Int>
+
+    @Query("SELECT * FROM posts WHERE authorId IN (:authorIds) AND isDeleted = 0 ORDER BY timestamp DESC")
+    fun getPostsByAuthors(authorIds: List<String>): Flow<List<Post>>
+
     @Query("SELECT COUNT(*) FROM posts")
     suspend fun getPostCount(): Int
     

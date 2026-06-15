@@ -1,103 +1,147 @@
 package com.neo.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Reply
-import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.neo.data.model.Comment
+import com.neo.data.model.CommentThread
 import com.neo.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.*
 
 /**
- * Composable for displaying a single comment.
- * Supports nested replies with indentation.
+ * A single comment rendered as a clean row: avatar, author + timestamp, content,
+ * and a "Reply" action. Used for both top-level comments and replies (replies use
+ * a smaller avatar and sit indented within their thread).
  */
 @Composable
-fun CommentItem(
+fun CommentRow(
     comment: Comment,
-    onReplyClick: (Comment) -> Unit,
+    avatarFor: (Comment) -> String?,
+    onReply: (Comment) -> Unit,
     modifier: Modifier = Modifier,
-    nestingLevel: Int = 0
+    isReply: Boolean = false
 ) {
-    val maxNestingLevel = 3 // Limit nesting depth
-    val indentDp = (nestingLevel * 16).dp
-    
-    Card(
+    val avatarSize = if (isReply) 28.dp else 36.dp
+    val imageUri = avatarFor(comment)
+
+    Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = indentDp, top = 8.dp, end = 8.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = NeoGray900
-        ),
-        border = BorderStroke(0.5.dp, GlassBorderSubtle),
-        shape = RoundedCornerShape(16.dp)
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.Top
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp)
-        ) {
-            // Author and timestamp
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        UserAvatar(
+            imageUri = imageUri,
+            size = avatarSize,
+            contentDescription = comment.authorName
+        )
+
+        Spacer(Modifier.width(10.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = comment.authorName,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = TextWhite
                 )
-                
+                Spacer(Modifier.width(8.dp))
                 Text(
                     text = formatTimestamp(comment.timestamp),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = TextWhite40
                 )
             }
-            
-            Spacer(modifier = Modifier.height(4.dp))
-            
-            // Comment content
+
+            Spacer(Modifier.height(2.dp))
+
             Text(
                 text = comment.content,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface
+                color = TextWhite80
             )
-            
-            // Reply button (only show if not at max nesting level)
-            if (nestingLevel < maxNestingLevel) {
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                TextButton(
-                    onClick = { onReplyClick(comment) },
+
+            Text(
+                text = "Reply",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = TextWhite60,
+                modifier = Modifier
+                    .padding(top = 4.dp)
+                    .clickable { onReply(comment) }
+            )
+        }
+    }
+}
+
+/**
+ * A top-level comment and its replies. Replies are collapsed behind a
+ * "View replies (N)" toggle and indented once when expanded, keeping the list
+ * readable regardless of how deep the underlying reply chain goes.
+ */
+@Composable
+fun CommentThreadItem(
+    thread: CommentThread,
+    avatarFor: (Comment) -> String?,
+    onReply: (Comment) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    // Indent so replies + the toggle line up under the parent's text, not its avatar.
+    val replyIndent = 46.dp
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        CommentRow(
+            comment = thread.comment,
+            avatarFor = avatarFor,
+            onReply = onReply
+        )
+
+        if (thread.replies.isNotEmpty()) {
+            var expanded by remember(thread.comment.id) { mutableStateOf(false) }
+
+            Row(
+                modifier = Modifier
+                    .padding(start = replyIndent, top = 2.dp, bottom = 2.dp)
+                    .clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Short connector line, Instagram-style.
+                Box(
                     modifier = Modifier
-                        .height(32.dp)
-                        .background(NeoGray800, RoundedCornerShape(16.dp)),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Reply,
-                        contentDescription = "Reply",
-                        modifier = Modifier.size(14.dp),
-                        tint = NeoLime
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "Reply",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = NeoLime
+                        .width(24.dp)
+                        .height(1.dp)
+                        .background(NeoHairline)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = if (expanded) "Hide replies"
+                    else "View replies (${thread.replies.size})",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = TextWhite60,
+                    fontSize = 12.sp
+                )
+            }
+
+            if (expanded) {
+                thread.replies.forEach { reply ->
+                    CommentRow(
+                        comment = reply,
+                        avatarFor = avatarFor,
+                        onReply = onReply,
+                        isReply = true,
+                        modifier = Modifier.padding(start = replyIndent)
                     )
                 }
             }
@@ -111,7 +155,7 @@ fun CommentItem(
 private fun formatTimestamp(timestamp: Long): String {
     val now = System.currentTimeMillis()
     val diff = now - timestamp
-    
+
     return when {
         diff < 60_000 -> "Just now"
         diff < 3600_000 -> "${diff / 60_000}m ago"

@@ -26,6 +26,7 @@ data class Post(
     val imageSize: Int? = null,        // Size of compressed image in bytes
     val imageWidth: Int? = null,       // Image width in pixels
     val imageHeight: Int? = null,      // Image height in pixels
+    val locationName: String? = null,  // Optional human-readable place the post was made from
     val timestamp: Long,               // Unix timestamp (milliseconds) when post was created
     val signature: String,             // Cryptographic signature of the post
     val publicKey: String,             // Author's public key for signature verification

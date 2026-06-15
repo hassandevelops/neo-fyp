@@ -14,6 +14,8 @@ import com.neo.data.dao.NotificationDao
 import com.neo.data.dao.ReactionDao
 import com.neo.data.dao.SavedPostDao
 import com.neo.data.dao.EventLogDao
+import com.neo.data.dao.PeerProfileDao
+import com.neo.data.dao.FollowDao
 import com.neo.data.model.Device
 import com.neo.data.model.EventLog
 import com.neo.data.model.Post
@@ -22,6 +24,8 @@ import com.neo.data.model.Comment
 import com.neo.data.model.Reaction
 import com.neo.data.model.Notification
 import com.neo.data.model.SavedPost
+import com.neo.data.model.PeerProfile
+import com.neo.data.model.Follow
 
 /**
  * Room database for Neo app.
@@ -36,9 +40,11 @@ import com.neo.data.model.SavedPost
         Reaction::class,
         Notification::class,
         SavedPost::class,
-        EventLog::class
+        EventLog::class,
+        PeerProfile::class,
+        Follow::class
     ],
-    version = 12,
+    version = 14,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -51,6 +57,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun notificationDao(): NotificationDao
     abstract fun savedPostDao(): SavedPostDao
     abstract fun eventLogDao(): EventLogDao
+    abstract fun peerProfileDao(): PeerProfileDao
+    abstract fun followDao(): FollowDao
 
     companion object {
         const val DATABASE_NAME = "neo_database"
@@ -277,6 +285,47 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // Add optional human-readable location attached to a post.
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE posts ADD COLUMN locationName TEXT")
+            }
+        }
+
+        // Profile sync (peer_profiles) + follow graph (follows) + notification
+        // navigation columns. See PeerProfile / Follow / Notification models.
+        private val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS peer_profiles (
+                        did TEXT NOT NULL PRIMARY KEY,
+                        displayName TEXT NOT NULL,
+                        bio TEXT NOT NULL DEFAULT '',
+                        avatarPath TEXT,
+                        updatedAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS follows (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        followerDid TEXT NOT NULL,
+                        followeeDid TEXT NOT NULL,
+                        active INTEGER NOT NULL DEFAULT 1,
+                        timestamp INTEGER NOT NULL,
+                        signature TEXT NOT NULL,
+                        publicKey TEXT NOT NULL
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_follows_unique ON follows(followerDid, followeeDid)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_follows_followeeDid ON follows(followeeDid)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_follows_followerDid ON follows(followerDid)")
+
+                database.execSQL("ALTER TABLE notifications ADD COLUMN targetUserId TEXT")
+                database.execSQL("ALTER TABLE notifications ADD COLUMN actorId TEXT")
+            }
+        }
+
         private fun getTableColumns(database: SupportSQLiteDatabase, tableName: String): Set<String> {
             val columns = mutableSetOf<String>()
             database.query("PRAGMA table_info($tableName)").use { cursor ->
@@ -306,7 +355,9 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_8_9,
                         MIGRATION_9_10,
                         MIGRATION_10_11,
-                        MIGRATION_11_12
+                        MIGRATION_11_12,
+                        MIGRATION_12_13,
+                        MIGRATION_13_14
                     )
                     .build()
                 INSTANCE = instance

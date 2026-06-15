@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.neo.bluetooth.Message
 import com.neo.bluetooth.MessageProtocol
+import com.neo.data.preferences.UserPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -19,7 +20,8 @@ class LibP2pNode(
     private val context: Context,
     private val scope: CoroutineScope,
     private val deviceId: String,
-    private val publicKeyBase64: String
+    private val publicKeyBase64: String,
+    private val userPreferences: UserPreferences? = null
 ) {
     companion object {
         private const val TAG = "LibP2pNode"
@@ -28,7 +30,7 @@ class LibP2pNode(
         const val LISTEN_PORT = 9876
     }
 
-    private val impl = GoLibP2pNode(context, scope, deviceId, publicKeyBase64)
+    private val impl = GoLibP2pNode(context, scope, deviceId, publicKeyBase64, userPreferences)
 
     val connectedPeers: StateFlow<List<String>> get() = impl.connectedPeers
     val incomingMessages: Flow<Pair<String, Message>> get() = impl.incomingMessages
@@ -45,6 +47,9 @@ class LibP2pNode(
 
     suspend fun publishToTopic(message: Message): Boolean =
         impl.publishToTopic(message)
+
+    suspend fun publishToGossipSub(message: Message): Boolean =
+        impl.publishToGossipSub(message)
 
     val listenAddresses: List<String>
         get() = impl.listenAddresses

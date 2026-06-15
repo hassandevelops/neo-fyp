@@ -31,12 +31,14 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
+import com.neo.ui.components.*
 import com.neo.ui.theme.*
 import com.neo.ui.viewmodel.CreatePostViewModel
 import kotlinx.coroutines.delay
@@ -44,22 +46,56 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
- * Create Post — modal sheet with drag-to-dismiss on the handle only.
- * Text input is fully interactive — drag gesture is isolated to the handle area.
+ * Create Post — modal sheet. The header area (handle + title bar) is draggable to
+ * dismiss; the content scrolls independently. Identity is read-only; location can
+ * be attached from the device GPS.
  */
 @Composable
 fun EnhancedCreatePostScreen(
-    onPostClick: (String, String, String?) -> Unit,
+    onPostClick: (String, String, String?, String?) -> Unit,
     onDismiss: () -> Unit,
+    currentUserName: String = "",
+    currentUserImageUri: String? = null,
     modifier: Modifier = Modifier
 ) {
     var content by remember { mutableStateOf("") }
-    var authorName by remember { mutableStateOf("") }
+    val authorName = currentUserName.ifBlank { "Neo User" }
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
+    var locationName by remember { mutableStateOf<String?>(null) }
+    var locationLoading by remember { mutableStateOf(false) }
     val maxContentLength = 500
-    val maxAuthorLength = 50
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // ── Location capture ──────────────────────────────────────────────────────
+    fun captureLocation() {
+        locationLoading = true
+        scope.launch {
+            when (val r = com.neo.media.LocationProvider.currentPlace(context)) {
+                is com.neo.media.LocationProvider.Result.Success -> locationName = r.name
+                is com.neo.media.LocationProvider.Result.Unavailable ->
+                    snackbarHostState.showSnackbar("Couldn't get your location. Try again outdoors.")
+                is com.neo.media.LocationProvider.Result.PermissionDenied ->
+                    snackbarHostState.showSnackbar("Location permission is required to attach a place.")
+            }
+            locationLoading = false
+        }
+    }
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) captureLocation()
+        else scope.launch { snackbarHostState.showSnackbar("Location permission denied.") }
+    }
+
+    fun onLocationClick() {
+        if (locationName != null) { locationName = null; return }  // toggle off
+        if (com.neo.media.LocationProvider.hasPermission(context)) captureLocation()
+        else locationPermissionLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
+    }
 
     // ── Drag-to-dismiss state ────────────────────────────────────────────────
     val sheetOffsetY = remember { Animatable(0f) }
@@ -95,7 +131,7 @@ fun EnhancedCreatePostScreen(
                 .fillMaxWidth()
                 .fillMaxHeight(0.85f)
                 .offset { IntOffset(0, sheetOffsetY.value.roundToInt()) }
-                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                .clip(NeoShapes.sheet)
                 .background(NeoDarkGray)
                 // Stop scrim click from propagating through the sheet
                 .clickable(
@@ -103,69 +139,61 @@ fun EnhancedCreatePostScreen(
                     indication = null
                 ) { /* consume — don't dismiss */ }
         ) {
+            // Drag gesture shared by the whole header region (handle + title bar),
+            // so users can dismiss by dragging anywhere in the header, not just the
+            // tiny handle. Content below scrolls independently.
+            val headerDrag = Modifier.pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragEnd = {
+                        scope.launch {
+                            if (sheetOffsetY.value > dismissThreshold) {
+                                animateDismiss()
+                            } else {
+                                sheetOffsetY.animateTo(
+                                    targetValue = 0f,
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                                        stiffness = Spring.StiffnessMedium
+                                    )
+                                )
+                            }
+                        }
+                    },
+                    onDragCancel = { scope.launch { sheetOffsetY.animateTo(0f, spring()) } },
+                    onVerticalDrag = { change, dragAmount ->
+                        change.consume()
+                        scope.launch {
+                            val newOffset = (sheetOffsetY.value + dragAmount).coerceAtLeast(0f)
+                            sheetOffsetY.snapTo(newOffset)
+                        }
+                    }
+                )
+            }
+
             Column(
                 modifier = Modifier.fillMaxSize()
             ) {
-                // ── Drag handle — ONLY this area is draggable ────────────────
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .pointerInput(Unit) {
-                            detectVerticalDragGestures(
-                                onDragEnd = {
-                                    scope.launch {
-                                        if (sheetOffsetY.value > dismissThreshold) {
-                                            animateDismiss()
-                                        } else {
-                                            sheetOffsetY.animateTo(
-                                                targetValue = 0f,
-                                                animationSpec = spring(
-                                                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                                                    stiffness = Spring.StiffnessMedium
-                                                )
-                                            )
-                                        }
-                                    }
-                                },
-                                onDragCancel = {
-                                    scope.launch {
-                                        sheetOffsetY.animateTo(0f, spring())
-                                    }
-                                },
-                                onVerticalDrag = { change, dragAmount ->
-                                    change.consume()
-                                    scope.launch {
-                                        val newOffset = (sheetOffsetY.value + dragAmount).coerceAtLeast(0f)
-                                        sheetOffsetY.snapTo(newOffset)
-                                    }
-                                }
-                            )
-                        }
-                        .padding(top = 12.dp, bottom = 8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
+                // ── Draggable header: handle + title bar ─────────────────────
+                Column(modifier = Modifier.fillMaxWidth().then(headerDrag)) {
                     Box(
                         modifier = Modifier
-                            .width(40.dp)
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(GlassBorderMid)
-                    )
-                }
-
-                // ── Scrollable content — fully interactive ───────────────────
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(scrollState)
-                        .imePadding()
-                        .padding(horizontal = 20.dp)
-                ) {
-                    // ── Top bar: × | New Post ───────────────────────────────
+                            .fillMaxWidth()
+                            .padding(top = 12.dp, bottom = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(40.dp)
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(TextWhite20)
+                        )
+                    }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 8.dp, bottom = 16.dp),
+                            .padding(horizontal = 20.dp)
+                            .padding(top = 4.dp, bottom = 12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -173,7 +201,7 @@ fun EnhancedCreatePostScreen(
                             onClick = { animateDismiss() },
                             modifier = Modifier
                                 .size(36.dp)
-                                .background(NeoGray800, CircleShape)
+                                .background(SurfaceElevated2, CircleShape)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Close,
@@ -190,54 +218,54 @@ fun EnhancedCreatePostScreen(
                         )
                         Spacer(Modifier.size(36.dp))
                     }
+                }
 
-                    // ── Author row ──────────────────────────────────────────
+                // ── Scrollable content — fully interactive ───────────────────
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(scrollState)
+                        .imePadding()
+                        .padding(horizontal = 20.dp)
+                ) {
+
+                    // ── Author row — read-only identity (current user) ──────
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.padding(bottom = 12.dp)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(42.dp)
-                                .clip(CircleShape)
-                                .border(2.dp, NeoLime, CircleShape)
-                                .background(NeoGray800),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.Person, null, tint = TextWhite60, modifier = Modifier.size(24.dp))
-                        }
-                        Column {
-                            OutlinedTextField(
-                                value = authorName,
-                                onValueChange = { if (it.length <= maxAuthorLength) authorName = it },
-                                modifier = Modifier.fillMaxWidth(),
-                                placeholder = {
-                                    Text(
-                                        "Neo User",
-                                        color = TextWhite60,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                },
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedTextColor = TextWhite,
-                                    unfocusedTextColor = TextWhite,
-                                    focusedBorderColor = Color.Transparent,
-                                    unfocusedBorderColor = Color.Transparent,
-                                    cursorColor = NeoLime
-                                ),
-                                textStyle = LocalTextStyle.current.copy(
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = TextWhite
-                                ),
-                                singleLine = true
+                        UserAvatar(
+                            imageUri = currentUserImageUri,
+                            size = 42.dp,
+                            ringColor = NeoLime,
+                            contentDescription = "Your avatar"
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = authorName,
+                                color = TextWhite,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
-                            Text("Public visibility", color = TextWhite60, fontSize = 12.sp)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Public,
+                                    null,
+                                    tint = TextWhite60,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text("Public visibility", color = TextWhite60, fontSize = 12.sp)
+                            }
                         }
                     }
 
-                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BorderWhite10))
+                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(NeoHairline))
                     Spacer(Modifier.height(12.dp))
 
                     // ── Content text area ───────────────────────────────────
@@ -280,7 +308,7 @@ fun EnhancedCreatePostScreen(
                             Box(
                                 modifier = Modifier
                                     .size(88.dp)
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .clip(NeoShapes.control)
                             ) {
                                 Image(
                                     painter = rememberAsyncImagePainter(selectedImageUri),
@@ -303,9 +331,8 @@ fun EnhancedCreatePostScreen(
                         Box(
                             modifier = Modifier
                                 .size(88.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .border(1.dp, BorderWhite20, RoundedCornerShape(12.dp))
-                                .background(NeoGray800, RoundedCornerShape(12.dp))
+                                .clip(NeoShapes.control)
+                                .background(SurfaceElevated2, NeoShapes.control)
                                 .clickable { imagePickerLauncher.launch("image/*") },
                             contentAlignment = Alignment.Center
                         ) {
@@ -313,7 +340,34 @@ fun EnhancedCreatePostScreen(
                         }
                     }
 
-                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BorderWhite10))
+                    // ── Attached location chip ───────────────────────────────
+                    if (locationLoading || locationName != null) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier
+                                .padding(bottom = 12.dp)
+                                .clip(NeoShapes.pill)
+                                .background(NeoLimeGlow20)
+                                .clickable(enabled = !locationLoading) { locationName = null }
+                                .padding(horizontal = 12.dp, vertical = 7.dp)
+                        ) {
+                            if (locationLoading) {
+                                CircularProgressIndicator(
+                                    color = NeoLime,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text("Getting location…", color = NeoLime, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            } else {
+                                Icon(Icons.Default.LocationOn, null, tint = NeoLime, modifier = Modifier.size(14.dp))
+                                Text(locationName!!, color = NeoLime, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                Icon(Icons.Default.Close, "Remove location", tint = NeoLime, modifier = Modifier.size(13.dp))
+                            }
+                        }
+                    }
+
+                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(NeoHairline))
 
                     // ── Toolbar ──────────────────────────────────────────────
                     Row(
@@ -324,9 +378,17 @@ fun EnhancedCreatePostScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                            Icon(Icons.Default.Image, "Photo", tint = TextWhite60, modifier = Modifier.size(22.dp).clickable { imagePickerLauncher.launch("image/*") })
-                            Icon(Icons.Default.Gif, "GIF", tint = TextWhite60, modifier = Modifier.size(22.dp))
-                            Icon(Icons.Default.LocationOn, "Location", tint = TextWhite60, modifier = Modifier.size(22.dp))
+                            Icon(
+                                Icons.Default.Image, "Photo", tint = TextWhite60,
+                                modifier = Modifier.size(22.dp).clickable { imagePickerLauncher.launch("image/*") }
+                            )
+                            Icon(
+                                Icons.Default.LocationOn, "Location",
+                                tint = if (locationName != null || locationLoading) NeoLime else TextWhite60,
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .clickable(enabled = !locationLoading) { onLocationClick() }
+                            )
                         }
 
                         Box(
@@ -334,7 +396,7 @@ fun EnhancedCreatePostScreen(
                                 .width(64.dp)
                                 .height(4.dp)
                                 .clip(RoundedCornerShape(2.dp))
-                                .background(BorderWhite20)
+                                .background(SurfaceElevated3)
                         ) {
                             Box(
                                 modifier = Modifier
@@ -352,36 +414,31 @@ fun EnhancedCreatePostScreen(
                     }
 
                     // ── Post button ──────────────────────────────────────────
-                    Button(
+                    NeoPrimaryButton(
+                        text = "Post to Neo",
+                        icon = Icons.Default.Send,
                         onClick = {
                             if (content.isNotBlank()) {
-                                val name = authorName.ifBlank { "Neo User" }
-                                onPostClick(content, name, selectedImageUri?.toString())
+                                onPostClick(content, authorName, selectedImageUri?.toString(), locationName)
                             }
                         },
                         enabled = content.isNotBlank(),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(54.dp)
-                            .padding(bottom = 4.dp),
-                        shape = RoundedCornerShape(50.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = NeoLime,
-                            disabledContainerColor = NeoLime.copy(alpha = 0.3f)
-                        )
-                    ) {
-                        Text(
-                            text = "Post to Neo  ▷",
-                            color = NeoBlack,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                        fillMaxWidth = true
+                    )
 
                     Spacer(Modifier.height(20.dp))
                 }
             }
         }
+
+        // Snackbar for location permission / availability feedback.
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .imePadding()
+        )
     }
 }
 

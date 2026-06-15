@@ -162,10 +162,16 @@ class BluetoothService : Service() {
         }
 
         val notification = createNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground failed: ${e.message}", e)
+            stopSelf()
+            return START_NOT_STICKY
         }
 
         if (!isRunning) {
@@ -358,9 +364,11 @@ class BluetoothService : Service() {
                     ?.getManufacturerSpecificData(0xFFFF)
                     ?.toString(Charsets.UTF_8)
 
-                // Role arbitration: higher identity initiates outbound GATT connection.
-                if (peerId != null && peerId <= deviceIdentity) {
-                    Log.d(TAG, "Discovered $address (lower id=$peerId), waiting for inbound")
+                // Role arbitration: strictly lower identity waits for inbound;
+                // higher identity initiates. Using < (not <=) prevents deadlock
+                // when both devices have the same identity string.
+                if (peerId != null && peerId < deviceIdentity) {
+                    Log.d(TAG, "Discovered $address (peer has lower id=$peerId than our $deviceIdentity), waiting for inbound")
                     return@let
                 }
 
@@ -679,6 +687,20 @@ class BluetoothService : Service() {
                 }
             }
 
+            override fun onCharacteristicWrite(
+                gatt: BluetoothGatt,
+                characteristic: BluetoothGattCharacteristic,
+                status: Int
+            ) {
+                // Drives flow control in GattPeerConnection.writeFrame: signals
+                // that the stack has accepted the previous frame so the next one
+                // may be sent. Without this, bulk transfers (images) overrun the
+                // BLE buffer and writes start failing mid-message.
+                if (characteristic.uuid == GATT_DATA_CHAR_UUID) {
+                    gattPeer?.onFrameWritten(status)
+                }
+            }
+
             @Suppress("DEPRECATION")
             override fun onCharacteristicChanged(
                 gatt: BluetoothGatt,
@@ -742,10 +764,13 @@ class BluetoothService : Service() {
     suspend fun sendMessage(peerAddress: String, message: Message): Boolean {
         val connection = connections[peerAddress]
         if (connection == null) {
-            Log.w(TAG, "No connection to $peerAddress")
+            Log.e(TAG, "sendMessage: No connection for $peerAddress (available: ${connections.keys})")
             return false
         }
-        return connection.sendMessage(message)
+        Log.e(TAG, "sendMessage: sending ${message::class.simpleName} to $peerAddress")
+        val result = connection.sendMessage(message)
+        Log.e(TAG, "sendMessage: result=$result for ${message::class.simpleName} to $peerAddress")
+        return result
     }
 
     suspend fun broadcastMessage(message: Message, excludePeer: String? = null) {

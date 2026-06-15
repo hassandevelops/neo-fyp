@@ -1,13 +1,10 @@
 package com.neo.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Send
@@ -21,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.neo.data.model.Comment
+import com.neo.data.model.CommentThread
 import com.neo.ui.theme.*
 import kotlinx.coroutines.delay
 
@@ -28,8 +26,8 @@ import kotlinx.coroutines.delay
 @Composable
 fun CommentsBottomSheet(
     postId: String,
-    topLevelComments: List<Comment>,
-    getReplies: @Composable (String) -> List<Comment>,
+    threads: List<CommentThread>,
+    avatarFor: (Comment) -> String?,
     onDismiss: () -> Unit,
     onCommentSubmit: (content: String, parentCommentId: String?) -> Unit,
     modifier: Modifier = Modifier
@@ -54,7 +52,7 @@ fun CommentsBottomSheet(
         modifier = modifier,
         containerColor = NeoDarkGray,     // Solid charcoal surface
         scrimColor = Color(0x990C0C0E),
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        shape = NeoShapes.sheet,
         tonalElevation = 0.dp
     ) {
         Column(
@@ -80,7 +78,7 @@ fun CommentsBottomSheet(
                     onClick = onDismiss,
                     modifier = Modifier
                         .size(36.dp)
-                        .background(NeoGray800, CircleShape)
+                        .background(SurfaceElevated2, CircleShape)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Close,
@@ -94,7 +92,7 @@ fun CommentsBottomSheet(
             Spacer(Modifier.height(16.dp))
 
             // Comments or empty state
-            if (topLevelComments.isEmpty()) {
+            if (threads.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     contentAlignment = Alignment.Center
@@ -109,12 +107,11 @@ fun CommentsBottomSheet(
                 LazyColumn(
                     modifier = Modifier.fillMaxWidth().weight(1f)
                 ) {
-                    items(topLevelComments) { comment ->
-                        CommentWithReplies(
-                            comment = comment,
-                            getReplies = getReplies,
-                            onReplyClick = { replyingTo = it },
-                            nestingLevel = 0
+                    items(threads, key = { it.comment.id }) { thread ->
+                        CommentThreadItem(
+                            thread = thread,
+                            avatarFor = avatarFor,
+                            onReply = { replyingTo = it }
                         )
                     }
                 }
@@ -124,10 +121,9 @@ fun CommentsBottomSheet(
             if (replyingTo != null) {
                 Surface(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    color = NeoGray800,
-                    shape = RoundedCornerShape(16.dp),
-                    tonalElevation = 0.dp,
-                    border = BorderStroke(0.5.dp, BorderWhite10)
+                    color = SurfaceElevated2,
+                    shape = NeoShapes.control,
+                    tonalElevation = 0.dp
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(8.dp),
@@ -171,14 +167,14 @@ fun CommentsBottomSheet(
                         )
                     },
                     maxLines = 3,
-                    shape = RoundedCornerShape(24.dp),
+                    shape = NeoShapes.control,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = TextWhite,
                         unfocusedTextColor = TextWhite,
-                        focusedBorderColor = GlassBorderGlow,
-                        unfocusedBorderColor = BorderWhite10,
-                        focusedContainerColor = GlassWhite8,
-                        unfocusedContainerColor = Color.Transparent,
+                        focusedBorderColor = NeoLime,
+                        unfocusedBorderColor = NeoHairline,
+                        focusedContainerColor = SurfaceElevated2,
+                        unfocusedContainerColor = SurfaceElevated1,
                         cursorColor = NeoLime
                     ),
                     supportingText = {
@@ -201,43 +197,19 @@ fun CommentsBottomSheet(
                     },
                     enabled = commentText.isNotBlank(),
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(44.dp)
                         .background(
-                            if (commentText.isNotBlank()) NeoGray700 else NeoGray800,
+                            if (commentText.isNotBlank()) NeoLime else SurfaceElevated2,
                             CircleShape
                         )
                 ) {
                     Icon(
                         imageVector = Icons.Default.Send,
                         contentDescription = "Send comment",
-                        tint = if (commentText.isNotBlank()) NeoLime else MaterialTheme.colorScheme.onSurfaceVariant
+                        tint = if (commentText.isNotBlank()) NeoBlack else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun CommentWithReplies(
-    comment: Comment,
-    getReplies: @Composable (String) -> List<Comment>,
-    onReplyClick: (Comment) -> Unit,
-    nestingLevel: Int
-) {
-    CommentItem(
-        comment = comment,
-        onReplyClick = onReplyClick,
-        nestingLevel = nestingLevel
-    )
-
-    val replies = getReplies(comment.id)
-    replies.forEach { reply ->
-        CommentWithReplies(
-            comment = reply,
-            getReplies = getReplies,
-            onReplyClick = onReplyClick,
-            nestingLevel = nestingLevel + 1
-        )
     }
 }

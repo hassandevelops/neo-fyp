@@ -23,11 +23,13 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/libp2p/go-libp2p/p2p/host/eventbus"
 	"github.com/libp2p/go-libp2p/p2p/host/routed"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 
 	"github.com/ipfs/go-cid"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -59,6 +61,7 @@ type Event struct {
 	Event   string `json:"event"`
 	PeerID  string `json:"peerID,omitempty"`
 	Message string `json:"message,omitempty"`
+	Topic   string `json:"topic,omitempty"`
 	Addrs   string `json:"addrs,omitempty"`
 	Count   int    `json:"count"`
 	Error   string `json:"error,omitempty"`
@@ -152,12 +155,15 @@ type Libp2pNode struct {
 	eventWriter   func(Event)
 	activeStreams map[string]network.Stream
 	lock          sync.RWMutex
-	bootPeerIDs   []peer.ID   // all connected bootstrap peers (both public and custom)
-	customBootIDs []peer.ID   // subset that support /neo/px/1.0.0 and /neo/proxy/1.0.0
+	bootPeerIDs   []peer.ID  // all connected bootstrap peers (both public and custom)
+	customBootIDs []peer.ID  // subset that support /neo/px/1.0.0 and /neo/proxy/1.0.0
 	customBootMu  sync.Mutex // guards customBootIDs
 	mdnsService   mdns.Service
 	pxMu          sync.Mutex
 	peerAddrs     map[peer.ID][]string
+	pubsub        *pubsub.PubSub
+	topic         *pubsub.Topic
+	topicSub      *pubsub.Subscription
 }
 
 // sendEvent writes a JSON event to the Kotlin app via TCP
@@ -371,6 +377,16 @@ func (n *Libp2pNode) handlePeerExchange(s network.Stream) {
 		log.Printf("px: no non-loopback addrs for %s", pid)
 		return
 	}
+	// Add announced addresses to the libp2p peerstore so future
+	// host.Connect(peer.AddrInfo{ID: pid}) calls in the discovery loop
+	// can find relay / circuit addresses. Without this, the bare-ID
+	// Connect at the top of the discovery loop has no addresses to
+	// work with and the relay fallback is unreachable for two NAT'd
+	// peers that only learned each other's addresses via PX.
+	for _, maddr := range filtered {
+		n.host.Peerstore().AddAddr(pid, maddr, peerstore.PermanentAddrTTL)
+	}
+	log.Printf("px: stored %d addrs in peerstore for %s", len(filtered), pid)
 	go func() {
 		cctx, cancel := context.WithTimeout(n.ctx, 60*time.Second)
 		defer cancel()
@@ -651,6 +667,58 @@ func newNode(ctx context.Context, privKeyBytes []byte, port int) (*Libp2pNode, e
 		_, err := relay.New(routedHost)
 		if err != nil {
 			log.Printf("relay service: %v", err)
+		}
+	}()
+
+	// Set up GossipSub for content routing. This is the global content
+	// fabric: any phone subscribed to the topic receives every message
+	// published by every other subscribed phone, delivered through the
+	// libp2p mesh (and through the IPFS AutoRelay for NAT'd peers).
+	ps, err := pubsub.NewGossipSub(
+		ctx,
+		routedHost,
+		pubsub.WithMessageSignaturePolicy(pubsub.StrictSign),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("new gossipsub: %w", err)
+	}
+	node.pubsub = ps
+
+	t, err := ps.Join(NeoTopic)
+	if err != nil {
+		return nil, fmt.Errorf("join topic %s: %w", NeoTopic, err)
+	}
+	node.topic = t
+
+	nodeSub, err := t.Subscribe()
+	if err != nil {
+		return nil, fmt.Errorf("subscribe topic %s: %w", NeoTopic, err)
+	}
+	node.topicSub = nodeSub
+	log.Printf("gossipsub: joined topic %s", NeoTopic)
+
+	// Drain pubsub messages and forward them to the Kotlin app as
+	// `topic_message` events. We skip messages that originated from our
+	// own peer ID so we don't echo our own broadcasts back to ourselves.
+	go func() {
+		for {
+			msg, err := nodeSub.Next(ctx)
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				log.Printf("gossipsub: next: %v", err)
+				continue
+			}
+			if msg.ReceivedFrom == routedHost.ID() {
+				continue
+			}
+			node.sendEvent(Event{
+				Event:   "topic_message",
+				PeerID:  msg.ReceivedFrom.String(),
+				Topic:   msg.GetTopic(),
+				Message: string(msg.Data),
+			})
 		}
 	}()
 
@@ -976,6 +1044,13 @@ func (n *Libp2pNode) stop() {
 	}
 	n.activeStreams = nil
 	n.lock.Unlock()
+	if n.topicSub != nil {
+		n.topicSub.Cancel()
+	}
+	if n.topic != nil {
+		n.topic.Close()
+	}
+	// pubsub has no Close; the cancelled context tears down its goroutines.
 	if n.mdnsService != nil {
 		n.mdnsService.Close()
 	}
@@ -1204,6 +1279,33 @@ func handleConnection(conn net.Conn) {
 
 		case "ping":
 			sendEvent(Event{Event: "pong"})
+
+		case "set_bootstrap":
+			// Override the bootstrap peer list. An empty multiaddr reverts
+			// to the built-in defaults. The next bootstrap supervisor tick
+			// picks up the change.
+			if cmd.Multiaddr == "" {
+				bootstrapPeers = loadBootstrapPeers()
+				log.Printf("bootstrap: override cleared, restored to %d default(s)", len(bootstrapPeers))
+			} else {
+				bootstrapPeers = []string{cmd.Multiaddr}
+				log.Printf("bootstrap: override applied, 1 peer")
+			}
+
+		case "publish":
+			if node == nil {
+				sendEvent(Event{Event: "error", Error: "not initialized"})
+				continue
+			}
+			if node.topic == nil {
+				sendEvent(Event{Event: "error", Error: "pubsub not initialized"})
+				continue
+			}
+			if err := node.topic.Publish(node.ctx, []byte(cmd.Message)); err != nil {
+				sendEvent(Event{Event: "error", Error: fmt.Sprintf("publish: %v", err)})
+			} else {
+				sendEvent(Event{Event: "published"})
+			}
 
 		default:
 			sendEvent(Event{Event: "error", Error: fmt.Sprintf("unknown cmd: %s", cmd.Cmd)})

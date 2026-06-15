@@ -19,5 +19,10 @@ data class Notification(
     val postId: String? = null,
     val authorName: String? = null,
     val timestamp: Long,
-    val isRead: Boolean = false
+    val isRead: Boolean = false,
+    // DID of the actor/target for navigation: for "follow" it's the follower's
+    // DID (→ their profile); reserved for mentions. Null for like/comment (use postId).
+    val targetUserId: String? = null,
+    // Actor DID, used to resolve the actor's avatar in the notification list/banner.
+    val actorId: String? = null
 )

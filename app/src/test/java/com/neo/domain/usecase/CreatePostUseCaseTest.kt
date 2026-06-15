@@ -63,6 +63,7 @@ class CreatePostUseCaseTest {
         val deviceId = "device-1"
         val expectedPubKey = java.util.Base64.getEncoder().encodeToString(testKeyPair.public.encoded)
         every { cryptoManager.getDeviceId() } returns deviceId
+        every { cryptoManager.getKeyAlgorithmPublic() } returns "RSA"
         every { rateLimiter.canCreatePost(deviceId) } returns true
         coEvery { postRepository.insertPost(any()) } returns true
         coEvery { syncPort.broadcastPost(any()) } just Runs
@@ -74,16 +75,12 @@ class CreatePostUseCaseTest {
 
         val result = useCase("Test content", "Test Author")
 
-        result.exceptionOrNull()?.let { e ->
-            println("FAILURE: ${e.message}")
-            println("FAILURE_TYPE: ${e.javaClass.name}")
-            e.printStackTrace()
-        }
         assertTrue(result.isSuccess)
         val post = result.getOrNull()
         assertEquals("Test Author", post?.authorName)
         assertEquals("Test content", post?.content)
-        assertEquals(deviceId, post?.authorId)
+        // Use case now uses the DID as the authorId (post v11+ schema).
+        assertEquals(testIdentity.did, post?.authorId)
         assertEquals(expectedPubKey, post?.publicKey)
         assertNotNull(post?.signature)
         assertEquals(7, post?.ttl)
@@ -95,6 +92,7 @@ class CreatePostUseCaseTest {
     fun `create post with blank content fails`() = runTest {
         every { cryptoManager.getDeviceId() } returns "device-1"
         every { rateLimiter.canCreatePost(any()) } returns true
+        coEvery { identityManager.getOrCreateIdentity() } returns testIdentity
 
         val result = useCase("", "Author")
 
@@ -106,6 +104,7 @@ class CreatePostUseCaseTest {
     fun `create post with blank author fails`() = runTest {
         every { cryptoManager.getDeviceId() } returns "device-1"
         every { rateLimiter.canCreatePost(any()) } returns true
+        coEvery { identityManager.getOrCreateIdentity() } returns testIdentity
 
         val result = useCase("Content", "")
 
@@ -117,6 +116,7 @@ class CreatePostUseCaseTest {
     fun `create post exceeding max length fails`() = runTest {
         every { cryptoManager.getDeviceId() } returns "device-1"
         every { rateLimiter.canCreatePost(any()) } returns true
+        coEvery { identityManager.getOrCreateIdentity() } returns testIdentity
 
         val longContent = "A".repeat(CreatePostUseCase.MAX_CONTENT_LENGTH + 1)
         val result = useCase(longContent, "Author")
@@ -131,6 +131,7 @@ class CreatePostUseCaseTest {
         every { cryptoManager.getDeviceId() } returns deviceId
         every { rateLimiter.canCreatePost(deviceId) } returns false
         every { rateLimiter.getTimeUntilNextPost(deviceId) } returns 120000L
+        coEvery { identityManager.getOrCreateIdentity() } returns testIdentity
 
         val result = useCase("Content", "Author")
 
@@ -144,6 +145,7 @@ class CreatePostUseCaseTest {
     fun `create post with image compression success`() = runTest {
         val compressedResult = CompressedImageResult("hash-123", ByteArray(100), 100, 200, 200)
         every { cryptoManager.getDeviceId() } returns "device-1"
+        every { cryptoManager.getKeyAlgorithmPublic() } returns "RSA"
         every { rateLimiter.canCreatePost(any()) } returns true
         every { cryptoManager.createPostMessage(any(), any(), any(), any()) } returns "message"
         coEvery { imageCompressor.compress("content://image.jpg") } returns compressedResult
@@ -169,6 +171,7 @@ class CreatePostUseCaseTest {
     fun `create post with image compression failure fails`() = runTest {
         every { cryptoManager.getDeviceId() } returns "device-1"
         every { rateLimiter.canCreatePost(any()) } returns true
+        coEvery { identityManager.getOrCreateIdentity() } returns testIdentity
         coEvery { imageCompressor.compress(any()) } returns null
 
         val result = useCase("Content", "Author", "content://bad.jpg")
@@ -181,6 +184,7 @@ class CreatePostUseCaseTest {
     @Test
     fun `create post calls broadcast after insert`() = runTest {
         every { cryptoManager.getDeviceId() } returns "device-1"
+        every { cryptoManager.getKeyAlgorithmPublic() } returns "RSA"
         every { rateLimiter.canCreatePost(any()) } returns true
         every { cryptoManager.createPostMessage(any(), any(), any(), any()) } returns "message"
         coEvery { postRepository.insertPost(any()) } returns true
@@ -201,6 +205,7 @@ class CreatePostUseCaseTest {
     @Test
     fun `create post repository failure returns error`() = runTest {
         every { cryptoManager.getDeviceId() } returns "device-1"
+        every { cryptoManager.getKeyAlgorithmPublic() } returns "RSA"
         every { rateLimiter.canCreatePost(any()) } returns true
         coEvery { identityManager.getOrCreateIdentity() } returns testIdentity
         coEvery { postRepository.insertPost(any()) } throws RuntimeException("DB error")
@@ -214,6 +219,7 @@ class CreatePostUseCaseTest {
     fun `create post populates all fields correctly`() = runTest {
         val deviceId = "device-1"
         every { cryptoManager.getDeviceId() } returns deviceId
+        every { cryptoManager.getKeyAlgorithmPublic() } returns "RSA"
         every { rateLimiter.canCreatePost(any()) } returns true
         every { cryptoManager.createPostMessage(any(), any(), any(), any()) } returns "message"
         coEvery { syncPort.broadcastPost(any()) } just Runs
@@ -230,7 +236,8 @@ class CreatePostUseCaseTest {
         val post = capturedPostSlot.captured
         assertEquals("Alice", post.authorName)
         assertEquals("Hello World", post.content)
-        assertEquals(deviceId, post.authorId)
+        // Use case now uses the DID as the authorId (post v11+ schema).
+        assertEquals(testIdentity.did, post.authorId)
         assertTrue(post.id.isNotEmpty())
         assertTrue(post.timestamp > 0)
         assertNotNull(post.signature)
@@ -241,6 +248,7 @@ class CreatePostUseCaseTest {
     @Test
     fun `create post uses crypto signature chain`() = runTest {
         every { cryptoManager.getDeviceId() } returns "device-1"
+        every { cryptoManager.getKeyAlgorithmPublic() } returns "RSA"
         every { rateLimiter.canCreatePost(any()) } returns true
         every { cryptoManager.createPostMessage(any(), any(), any(), any()) } returns "message"
         coEvery { postRepository.insertPost(any()) } returns true

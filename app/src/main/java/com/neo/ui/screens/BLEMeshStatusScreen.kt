@@ -1,6 +1,7 @@
 package com.neo.ui.screens
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -18,14 +19,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -33,10 +33,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neo.R
+import com.neo.ui.components.MeshRadar
+import com.neo.ui.components.meshNodesFrom
+import com.neo.ui.components.organicPattern
 import com.neo.ui.theme.*
 import androidx.compose.ui.res.painterResource
-import kotlin.math.cos
-import kotlin.math.sin
 
 /**
  * BLE Mesh Status Screen – "Neo Mesh Status" with orbital animation and 2×2 stat grid.
@@ -47,31 +48,11 @@ fun BLEMeshStatusScreen(
     connectedPeers: List<String>,
     onForceSync: () -> Unit,
     onBack: () -> Unit,
+    dhtPeerCount: Int = 0,
+    bootstrapConnected: Boolean = false,
+    lastError: String? = null,
     modifier: Modifier = Modifier
 ) {
-    // ── Animations ───────────────────────────────────────────────────────
-    val infiniteTransition = rememberInfiniteTransition(label = "orbit_anim")
-
-    val orbitProgress by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = (2 * Math.PI).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(8000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "orbit_progress"
-    )
-
-    val glowPulse by infiniteTransition.animateFloat(
-        initialValue = 0.5f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "glow_pulse"
-    )
-
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -137,134 +118,20 @@ fun BLEMeshStatusScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            // ── Orbital Canvas ───────────────────────────────────────────
-            Box(
+            // ── Mesh Radar ───────────────────────────────────────────────
+            // Real-time view of nearby peers around this device. Node positions /
+            // signal are derived deterministically from peer IDs (no RSSI in the
+            // data layer); discovery & loss animate as the live peer set changes.
+            MeshRadar(
+                nodes = meshNodesFrom(
+                    connectedPeers = connectedPeers,
+                    dhtPeerCount = dhtPeerCount,
+                ),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(220.dp)
-                    .drawBehind {
-                        val cx = size.width / 2f
-                        val cy = size.height / 2f
-
-                        // ── Central glow ──
-                        val glowRadius = 55f * glowPulse
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    NeoLime.copy(alpha = 0.45f * glowPulse),
-                                    NeoLime.copy(alpha = 0.15f * glowPulse),
-                                    Color.Transparent
-                                ),
-                                center = Offset(cx, cy),
-                                radius = glowRadius * 2.5f
-                            ),
-                            radius = glowRadius * 2.5f,
-                            center = Offset(cx, cy)
-                        )
-
-                        // Inner solid core
-                        drawCircle(
-                            color = NeoLime,
-                            radius = 14f,
-                            center = Offset(cx, cy)
-                        )
-                        // Outer glow ring
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    NeoLime.copy(alpha = 0.7f * glowPulse),
-                                    NeoLime.copy(alpha = 0.0f)
-                                ),
-                                center = Offset(cx, cy),
-                                radius = 32f
-                            ),
-                            radius = 32f,
-                            center = Offset(cx, cy)
-                        )
-
-                        // ── Orbits (3 tilted ellipses) ──
-                        val dashEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 15f), 0f)
-                        data class OrbitSpec(
-                            val rx: Float,
-                            val ry: Float,
-                            val rotation: Float,
-                            val satAngleOffset: Float
-                        )
-
-                        val orbits = listOf(
-                            OrbitSpec(rx = 160f, ry = 60f, rotation = -15f, satAngleOffset = 0f),
-                            OrbitSpec(rx = 200f, ry = 75f, rotation = 10f, satAngleOffset = 2.1f),
-                            OrbitSpec(rx = 240f, ry = 90f, rotation = -5f, satAngleOffset = 4.2f)
-                        )
-
-                        for (orbit in orbits) {
-                            withTransform({
-                                translate(cx - orbit.rx, cy - orbit.ry)
-                                rotate(
-                                    degrees = orbit.rotation,
-                                    pivot = Offset(orbit.rx, orbit.ry)
-                                )
-                            }) {
-                                drawOval(
-                                    color = TextWhite20,
-                                    topLeft = Offset.Zero,
-                                    size = Size(orbit.rx * 2f, orbit.ry * 2f),
-                                    style = Stroke(
-                                        width = 1.5f,
-                                        pathEffect = dashEffect
-                                    )
-                                )
-                            }
-
-                            // Satellite dot
-                            val angle = orbitProgress + orbit.satAngleOffset
-                            val rad = Math.toRadians(orbit.rotation.toDouble())
-                            val baseX = orbit.rx * cos(angle)
-                            val baseY = orbit.ry * sin(angle)
-                            // apply rotation transform manually
-                            val sx = cx + (baseX * cos(rad) - baseY * sin(rad)).toFloat()
-                            val sy = cy + (baseX * sin(rad) + baseY * cos(rad)).toFloat()
-
-                            // Small glow behind satellite
-                            drawCircle(
-                                brush = Brush.radialGradient(
-                                    colors = listOf(
-                                        NeoLime.copy(alpha = 0.5f),
-                                        Color.Transparent
-                                    ),
-                                    center = Offset(sx, sy),
-                                    radius = 14f
-                                ),
-                                radius = 14f,
-                                center = Offset(sx, sy)
-                            )
-                            drawCircle(
-                                color = NeoLime,
-                                radius = 5f,
-                                center = Offset(sx, sy)
-                            )
-                        }
-                    }
+                    .padding(horizontal = 16.dp)
             )
-
-            Spacer(Modifier.height(12.dp))
-
-            // ── Pager Indicator ──────────────────────────────────────────
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                repeat(5) { index ->
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(if (index == 0) NeoLime else TextWhite20)
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
 
             Spacer(Modifier.height(24.dp))
 
@@ -275,10 +142,10 @@ fun BLEMeshStatusScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = NeoLime.copy(alpha = 0.2f),
-                    contentColor = NeoLime
+                    containerColor = NeoLime,
+                    contentColor = NeoBlack
                 ),
-                shape = RoundedCornerShape(16.dp)
+                shape = NeoShapes.pill
             ) {
                 Icon(
                     imageVector = Icons.Default.Sync,
@@ -286,7 +153,7 @@ fun BLEMeshStatusScreen(
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(Modifier.width(8.dp))
-                Text("Force Sync Now", fontWeight = FontWeight.SemiBold)
+                Text("Force Sync Now", fontWeight = FontWeight.Bold)
             }
 
             Spacer(Modifier.height(24.dp))
@@ -310,19 +177,15 @@ fun BLEMeshStatusScreen(
                         mainValue = connectedPeers.size.toString(),
                         subValue = "/ 32",
                         badgeText = "Optimal",
-                        badgeBackgroundColor = SurfaceWhite20,
-                        badgeTextColor = TextWhite80,
                         showProgressBar = false,
+                        accent = true,
                         modifier = Modifier.weight(1f)
                     )
-                    StatCard(
-                        backgroundColor = NeoGray900,
-                        icon = Icons.Default.BarChart,
-                        title = "Throughput",
-                        mainValue = "--",
-                        subValue = "",
-                        badgeText = null,
-                        showProgressBar = true,
+                    ThroughputRingCard(
+                        value = "--",
+                        unit = "kb/s",
+                        progress = 0f,
+                        awaitingData = true,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -332,31 +195,88 @@ fun BLEMeshStatusScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    StatCard(
-                        backgroundColor = NeoGray900,
-                        icon = Icons.Default.GraphicEq,
-                        title = "Avg Latency",
-                        mainValue = "--",
-                        subValue = "",
-                        badgeText = null,
-                        showProgressBar = false,
+                    LatencyTrendCard(
+                        value = "--",
+                        unit = "ms",
+                        samples = emptyList(),
+                        trendLabel = "Idle",
                         modifier = Modifier.weight(1f)
                     )
-                    StatCard(
-                        backgroundColor = NeoGray900,
-                        icon = Icons.Default.Sensors,
-                        title = "Transfer Rate",
-                        mainValue = "--",
-                        subValue = "",
-                        badgeText = null,
-                        showProgressBar = false,
+                    TransferRateCard(
+                        value = "--",
+                        unit = "kb/s",
+                        activity = 0f,
+                        awaitingData = true,
                         modifier = Modifier.weight(1f)
                     )
                 }
             }
 
             Spacer(Modifier.height(24.dp))
+
+            // ── WAN (libp2p) Status ───────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "WAN (libp2p)",
+                    color = TextWhite60,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = NeoShapes.card,
+                    colors = CardDefaults.cardColors(containerColor = SurfaceElevated1)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .organicPattern(SurfaceElevated1, richness = 4)
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        WanStatusRow(
+                            label = "Bootstrap",
+                            value = if (bootstrapConnected) "Connected" else "Connecting…",
+                            color = if (bootstrapConnected) NeoLime else TextWhite60
+                        )
+                        WanStatusRow(
+                            label = "DHT peers",
+                            value = dhtPeerCount.toString(),
+                            color = TextWhite
+                        )
+                        lastError?.let { err ->
+                            WanStatusRow(
+                                label = "Last error",
+                                value = err.take(60),
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
         }
+    }
+}
+
+@Composable
+private fun WanStatusRow(
+    label: String,
+    value: String,
+    color: Color
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(text = label, color = TextWhite60, fontSize = 13.sp)
+        Text(text = value, color = color, fontSize = 13.sp, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -369,19 +289,27 @@ private fun StatCard(
     mainValue: String,
     subValue: String,
     badgeText: String?,
-    badgeBackgroundColor: Color = SurfaceWhite20,
+    badgeBackgroundColor: Color = SurfaceElevated3,
     badgeTextColor: Color = TextWhite80,
     showProgressBar: Boolean = false,
+    accent: Boolean = false,
     modifier: Modifier = Modifier
 ) {
+    // Lime accent variant uses dark content for contrast.
+    val container = if (accent) NeoLime else backgroundColor
+    val iconTint = if (accent) NeoBlack else TextWhite60
+    val titleColor = if (accent) NeoBlack.copy(alpha = 0.7f) else TextWhite60
+    val valueColor = if (accent) NeoBlack else TextWhite
+    val subColor = if (accent) NeoBlack.copy(alpha = 0.55f) else TextWhite40
     Card(
         modifier = modifier,
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = backgroundColor)
+        shape = NeoShapes.tile,
+        colors = CardDefaults.cardColors(containerColor = container)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .organicPattern(container, richness = 5)
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -394,18 +322,18 @@ private fun StatCard(
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = TextWhite60,
+                    tint = iconTint,
                     modifier = Modifier.size(20.dp)
                 )
 
                 if (badgeText != null) {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = badgeBackgroundColor
+                        color = if (accent) NeoBlack.copy(alpha = 0.12f) else badgeBackgroundColor
                     ) {
                         Text(
                             text = badgeText,
-                            color = badgeTextColor,
+                            color = if (accent) NeoBlack else badgeTextColor,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -418,7 +346,7 @@ private fun StatCard(
             if (title.isNotEmpty()) {
                 Text(
                     text = title,
-                    color = TextWhite60,
+                    color = titleColor,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium
                 )
@@ -430,14 +358,14 @@ private fun StatCard(
             ) {
                 Text(
                     text = mainValue,
-                    color = TextWhite,
+                    color = valueColor,
                     fontSize = 32.sp,
                     fontWeight = FontWeight.Bold
                 )
                 if (subValue.isNotEmpty()) {
                     Text(
                         text = subValue,
-                        color = TextWhite40,
+                        color = subColor,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier.padding(bottom = 4.dp)
@@ -453,7 +381,7 @@ private fun StatCard(
                         .fillMaxWidth()
                         .height(4.dp)
                         .clip(RoundedCornerShape(2.dp))
-                        .background(SurfaceWhite10)
+                        .background(SurfaceElevated3)
                 ) {
                     Box(
                         modifier = Modifier
@@ -463,6 +391,252 @@ private fun StatCard(
                             .background(NeoLime)
                     )
                 }
+            }
+        }
+    }
+}
+
+// ── Shared scaffold for visualization metric cards ──────────────────────────
+// Keeps every diagnostic card in the same family: same tile shape, dark surface,
+// organic pattern, header row (icon + title) and a visualization slot beneath.
+@Composable
+private fun MetricVizCard(
+    icon: ImageVector,
+    title: String,
+    modifier: Modifier = Modifier,
+    badgeText: String? = null,
+    viz: @Composable BoxScope.() -> Unit,
+) {
+    Card(
+        modifier = modifier,
+        shape = NeoShapes.tile,
+        colors = CardDefaults.cardColors(containerColor = SurfaceElevated1)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .organicPattern(SurfaceElevated1, richness = 5)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(icon, contentDescription = null, tint = TextWhite60, modifier = Modifier.size(20.dp))
+                    Text(title, color = TextWhite60, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                }
+                if (badgeText != null) {
+                    Surface(shape = RoundedCornerShape(12.dp), color = SurfaceElevated3) {
+                        Text(
+                            text = badgeText,
+                            color = TextWhite80,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(96.dp),
+                contentAlignment = Alignment.Center,
+                content = viz
+            )
+        }
+    }
+}
+
+/**
+ * Throughput — a clean solid 360° lime progress ring with the value in the centre.
+ * [progress] (0..1). When [awaitingData] the ring softly pulses to read as "live,
+ * no telemetry yet" rather than showing a fake fill.
+ */
+@Composable
+private fun ThroughputRingCard(
+    value: String,
+    unit: String,
+    progress: Float,
+    awaitingData: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val infinite = rememberInfiniteTransition(label = "throughput")
+    val pulse by infinite.animateFloat(
+        initialValue = 0.45f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "tp_pulse",
+    )
+    val sweep by animateFloatAsState(
+        targetValue = if (awaitingData) 0.18f else progress.coerceIn(0f, 1f),
+        animationSpec = tween(900, easing = FastOutSlowInEasing),
+        label = "tp_sweep",
+    )
+    MetricVizCard(icon = Icons.Default.BarChart, title = "Throughput", modifier = modifier) {
+        Box(modifier = Modifier.size(96.dp), contentAlignment = Alignment.Center) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val stroke = 8.dp.toPx()
+                val d = size.minDimension - stroke
+                val topLeft = Offset((size.width - d) / 2f, (size.height - d) / 2f)
+                val arcSize = Size(d, d)
+                // Soft outer glow.
+                drawArc(
+                    brush = Brush.radialGradient(
+                        listOf(NeoLime.copy(alpha = 0.12f * pulse), Color.Transparent),
+                        center = center, radius = size.minDimension / 2f,
+                    ),
+                    startAngle = 0f, sweepAngle = 360f, useCenter = true,
+                )
+                // Track ring.
+                drawArc(
+                    color = SurfaceElevated3, startAngle = -90f, sweepAngle = 360f, useCenter = false,
+                    topLeft = topLeft, size = arcSize, style = Stroke(stroke, cap = StrokeCap.Round),
+                )
+                // Progress ring.
+                drawArc(
+                    color = NeoLime.copy(alpha = if (awaitingData) 0.55f * pulse else 1f),
+                    startAngle = -90f, sweepAngle = 360f * sweep, useCenter = false,
+                    topLeft = topLeft, size = arcSize, style = Stroke(stroke, cap = StrokeCap.Round),
+                )
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(value, color = TextWhite, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                if (unit.isNotEmpty()) {
+                    Text(unit, color = TextWhite40, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Transfer Rate — a segmented radial gauge (discrete ticks around a ring) with a
+ * rotating radar-style scanner, so it reads as live activity and is visually
+ * distinct from the solid Throughput ring.
+ */
+@Composable
+private fun TransferRateCard(
+    value: String,
+    unit: String,
+    activity: Float,
+    awaitingData: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val infinite = rememberInfiniteTransition(label = "transfer")
+    val scan by infinite.animateFloat(
+        initialValue = 0f, targetValue = (2f * Math.PI).toFloat(),
+        animationSpec = infiniteRepeatable(tween(3200, easing = LinearEasing), RepeatMode.Restart),
+        label = "tr_scan",
+    )
+    val litFraction by animateFloatAsState(
+        targetValue = if (awaitingData) 0.0f else activity.coerceIn(0f, 1f),
+        animationSpec = tween(900, easing = FastOutSlowInEasing),
+        label = "tr_lit",
+    )
+    MetricVizCard(icon = Icons.Default.Sensors, title = "Transfer Rate", modifier = modifier) {
+        Box(modifier = Modifier.size(96.dp), contentAlignment = Alignment.Center) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val segments = 28
+                val r = size.minDimension / 2f - 4.dp.toPx()
+                val inner = r - 9.dp.toPx()
+                val twoPi = (2f * Math.PI).toFloat()
+                for (i in 0 until segments) {
+                    val a = -Math.PI.toFloat() / 2f + twoPi * i / segments
+                    // Angular nearness to the rotating scanner → highlight.
+                    var da = kotlin.math.abs(((a - scan + twoPi) % twoPi))
+                    if (da > Math.PI) da = twoPi - da
+                    val scanBoost = (1f - da / 0.6f).coerceIn(0f, 1f)
+                    val lit = i < (segments * litFraction).toInt()
+                    val base = when {
+                        lit -> 0.85f
+                        else -> 0.16f
+                    }
+                    val alpha = (base + scanBoost * 0.5f).coerceIn(0f, 1f)
+                    val p1 = Offset(center.x + kotlin.math.cos(a) * inner, center.y + kotlin.math.sin(a) * inner)
+                    val p2 = Offset(center.x + kotlin.math.cos(a) * r, center.y + kotlin.math.sin(a) * r)
+                    drawLine(NeoLime.copy(alpha = alpha), p1, p2, strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round)
+                }
+                // Scanner sweep line.
+                val end = Offset(center.x + kotlin.math.cos(scan) * inner, center.y + kotlin.math.sin(scan) * inner)
+                drawLine(NeoLime.copy(alpha = 0.4f), center, end, strokeWidth = 1.5f)
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(value, color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                if (unit.isNotEmpty()) {
+                    Text(unit, color = TextWhite40, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Avg Latency — a compact sparkline emphasising stability / spikes / trend, with
+ * the current value shown prominently above it. [samples] are normalised 0..1
+ * (higher = worse latency). When awaiting data a gentle animated baseline shows.
+ */
+@Composable
+private fun LatencyTrendCard(
+    value: String,
+    unit: String,
+    samples: List<Float>,
+    trendLabel: String,
+    modifier: Modifier = Modifier,
+) {
+    val phase by rememberInfiniteTransition(label = "latency").animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Restart),
+        label = "lat_phase",
+    )
+    val animatedSamples = if (samples.isEmpty()) {
+        // Idle breathing baseline so the card still feels alive without faking data.
+        List(24) { i -> 0.5f + 0.12f * kotlin.math.sin((i / 24f + phase) * 2f * Math.PI).toFloat() }
+    } else samples
+    MetricVizCard(icon = Icons.Default.GraphicEq, title = "Avg Latency", modifier = modifier, badgeText = trendLabel) {
+        Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(value, color = TextWhite, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                if (unit.isNotEmpty()) {
+                    Text(unit, color = TextWhite40, fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(bottom = 3.dp))
+                }
+            }
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            ) {
+                val n = animatedSamples.size
+                if (n < 2) return@Canvas
+                val stepX = size.width / (n - 1)
+                fun y(v: Float) = size.height * (1f - v.coerceIn(0f, 1f)) * 0.9f + size.height * 0.05f
+                val line = Path()
+                val fill = Path()
+                animatedSamples.forEachIndexed { i, v ->
+                    val px = stepX * i
+                    val py = y(v)
+                    if (i == 0) { line.moveTo(px, py); fill.moveTo(px, size.height); fill.lineTo(px, py) }
+                    else { line.lineTo(px, py); fill.lineTo(px, py) }
+                }
+                fill.lineTo(size.width, size.height)
+                fill.close()
+                // Soft area fill under the line.
+                drawPath(
+                    fill,
+                    brush = Brush.verticalGradient(listOf(NeoLime.copy(alpha = 0.18f), Color.Transparent)),
+                )
+                drawPath(line, color = NeoLime, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
+                // Highlight the latest point.
+                val lastX = stepX * (n - 1)
+                val lastY = y(animatedSamples.last())
+                drawCircle(NeoLime.copy(alpha = 0.25f), radius = 6.dp.toPx(), center = Offset(lastX, lastY))
+                drawCircle(NeoLime, radius = 2.5f.dp.toPx(), center = Offset(lastX, lastY))
             }
         }
     }

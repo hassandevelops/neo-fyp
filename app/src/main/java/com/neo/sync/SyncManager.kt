@@ -79,12 +79,28 @@ class SyncManager @Inject constructor(
                             gossipProtocol.handleReceivedReaction(message, peerAddress)
                             sendAck(service, peerAddress, message.id, "ReactionBroadcast")
                         }
-                        is Message.ImageMetadata -> gossipProtocol.handleImageMetadata(message, peerAddress)
-                        is Message.ImageChunk -> gossipProtocol.handleImageChunk(message, peerAddress)
+                        is Message.ImageMetadata -> {
+                            gossipProtocol.handleImageMetadata(message, peerAddress)
+                            sendAck(service, peerAddress, "${message.postId}:img:meta", "ImageMetadata")
+                        }
+                        is Message.ImageChunk -> {
+                            gossipProtocol.handleImageChunk(message, peerAddress)
+                            // Ack every chunk, including duplicates — the lost
+                            // message may have been a previous ack, not the chunk.
+                            sendAck(service, peerAddress, "${message.postId}:img:${message.chunkIndex}", "ImageChunk")
+                        }
                         is Message.Ack -> gossipProtocol.handleAck(message)
                         is Message.EventSyncRequest -> handleEventSyncRequest(message, peerAddress)
                         is Message.EventSyncResponse -> handleEventSyncResponse(message, peerAddress)
                         is Message.PeerExchange -> handlePeerExchange(message, peerAddress)
+                        is Message.ProfileBroadcast -> {
+                            gossipProtocol.handleReceivedProfile(message, peerAddress)
+                            sendAck(service, peerAddress, "${message.did}:profile:${message.updatedAt}", "ProfileBroadcast")
+                        }
+                        is Message.FollowBroadcast -> {
+                            gossipProtocol.handleReceivedFollow(message, peerAddress)
+                            sendAck(service, peerAddress, "${message.id}:${message.timestamp}", "FollowBroadcast")
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -120,6 +136,8 @@ class SyncManager @Inject constructor(
                     gossipProtocol.sendHandshake(peerAddress)
                     scope.launch { sendPeerExchange(peerAddress) }
                     scope.launch { broadcastAllLocalPostsTo(peerAddress) }
+                    scope.launch { gossipProtocol.broadcastProfileToPeer(peerAddress) }
+                    scope.launch { gossipProtocol.broadcastFollowsToPeer(peerAddress) }
                 }
                 knownPeers = currentPeers
             }
@@ -322,12 +340,26 @@ class SyncManager @Inject constructor(
                             gossipProtocol.handleReceivedReaction(message, peerAddress)
                             sendAckViaTp(service, peerAddress, message.id, "ReactionBroadcast")
                         }
-                        is Message.ImageMetadata -> gossipProtocol.handleImageMetadata(message, peerAddress)
-                        is Message.ImageChunk -> gossipProtocol.handleImageChunk(message, peerAddress)
+                        is Message.ImageMetadata -> {
+                            gossipProtocol.handleImageMetadata(message, peerAddress)
+                            sendAckViaTp(service, peerAddress, "${message.postId}:img:meta", "ImageMetadata")
+                        }
+                        is Message.ImageChunk -> {
+                            gossipProtocol.handleImageChunk(message, peerAddress)
+                            sendAckViaTp(service, peerAddress, "${message.postId}:img:${message.chunkIndex}", "ImageChunk")
+                        }
                         is Message.Ack -> gossipProtocol.handleAck(message)
                         is Message.EventSyncRequest -> handleEventSyncRequest(message, peerAddress)
                         is Message.EventSyncResponse -> handleEventSyncResponse(message, peerAddress)
                         is Message.PeerExchange -> handlePeerExchange(message, peerAddress)
+                        is Message.ProfileBroadcast -> {
+                            gossipProtocol.handleReceivedProfile(message, peerAddress)
+                            sendAckViaTp(service, peerAddress, "${message.did}:profile:${message.updatedAt}", "ProfileBroadcast")
+                        }
+                        is Message.FollowBroadcast -> {
+                            gossipProtocol.handleReceivedFollow(message, peerAddress)
+                            sendAckViaTp(service, peerAddress, "${message.id}:${message.timestamp}", "FollowBroadcast")
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -359,6 +391,8 @@ class SyncManager @Inject constructor(
                     gossipProtocol.sendHandshake(peerId)
                     scope.launch { sendPeerExchange(peerId) }
                     scope.launch { broadcastAllLocalPostsTo(peerId) }
+                    scope.launch { gossipProtocol.broadcastProfileToPeer(peerId) }
+                    scope.launch { gossipProtocol.broadcastFollowsToPeer(peerId) }
                 }
                 knownPeers = currentPeers
             }

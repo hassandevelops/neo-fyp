@@ -33,19 +33,19 @@ class CreatePostViewModelTest {
 
     @Test
     fun `create post success updates ui state to Success`() = runTest(testDispatcher) {
-        coEvery { createPostUseCase(any(), any(), any()) } returns Result.success(mockk(relaxed = true))
+        coEvery { createPostUseCase(any(), any(), any(), any()) } returns Result.success(mockk(relaxed = true))
         val vm = CreatePostViewModel(mockk(relaxed = true), createPostUseCase)
 
         vm.createPost("Content", "Author")
         advanceUntilIdle()
 
         assertTrue(vm.uiState.value is CreatePostViewModel.UiState.Success)
-        assertEquals("Post created successfully!", (vm.uiState.value as CreatePostViewModel.UiState.Success).message)
+        assertEquals("Post shared with mesh", (vm.uiState.value as CreatePostViewModel.UiState.Success).message)
     }
 
     @Test
     fun `create post failure updates ui state to Error`() = runTest(testDispatcher) {
-        coEvery { createPostUseCase(any(), any(), any()) } returns Result.failure(IllegalArgumentException("Content too long"))
+        coEvery { createPostUseCase(any(), any(), any(), any()) } returns Result.failure(IllegalArgumentException("Content too long"))
         val vm = CreatePostViewModel(mockk(relaxed = true), createPostUseCase)
 
         vm.createPost("Very long content", "Author")
@@ -57,29 +57,29 @@ class CreatePostViewModelTest {
 
     @Test
     fun `create post with null image uri`() = runTest(testDispatcher) {
-        coEvery { createPostUseCase("Content", "Author", null) } returns Result.success(mockk(relaxed = true))
+        coEvery { createPostUseCase("Content", "Author", null, null) } returns Result.success(mockk(relaxed = true))
         val vm = CreatePostViewModel(mockk(relaxed = true), createPostUseCase)
 
         vm.createPost("Content", "Author", null)
         advanceUntilIdle()
 
-        coVerify { createPostUseCase("Content", "Author", null) }
+        coVerify { createPostUseCase("Content", "Author", null, null) }
     }
 
     @Test
     fun `create post with image uri`() = runTest(testDispatcher) {
-        coEvery { createPostUseCase("Content", "Author", "content://image.jpg") } returns Result.success(mockk(relaxed = true))
+        coEvery { createPostUseCase("Content", "Author", "content://image.jpg", null) } returns Result.success(mockk(relaxed = true))
         val vm = CreatePostViewModel(mockk(relaxed = true), createPostUseCase)
 
         vm.createPost("Content", "Author", "content://image.jpg")
         advanceUntilIdle()
 
-        coVerify { createPostUseCase("Content", "Author", "content://image.jpg") }
+        coVerify { createPostUseCase("Content", "Author", "content://image.jpg", null) }
     }
 
     @Test
     fun `reset ui state returns to Idle`() = runTest(testDispatcher) {
-        coEvery { createPostUseCase(any(), any(), any()) } returns Result.success(mockk(relaxed = true))
+        coEvery { createPostUseCase(any(), any(), any(), any()) } returns Result.success(mockk(relaxed = true))
         val vm = CreatePostViewModel(mockk(relaxed = true), createPostUseCase)
 
         vm.createPost("Content", "Author")
@@ -91,7 +91,7 @@ class CreatePostViewModelTest {
 
     @Test
     fun `failed post falls back to default error message`() = runTest(testDispatcher) {
-        coEvery { createPostUseCase(any(), any(), any()) } returns Result.failure(Exception())
+        coEvery { createPostUseCase(any(), any(), any(), any()) } returns Result.failure(Exception())
         val vm = CreatePostViewModel(mockk(relaxed = true), createPostUseCase)
 
         vm.createPost("Content", "Author")

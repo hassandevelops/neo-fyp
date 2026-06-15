@@ -36,18 +36,19 @@ fun EnhancedBottomNavigation(
         color = NeoBlack,          // Solid — matches app background
         tonalElevation = 0.dp
     ) {
-        // Subtle top divider for hierarchy separation
-        Column {
+        // navigationBarsPadding lifts the controls above the device nav area
+        // (gesture pill or 3-button bar); the black surface fills behind it.
+        Column(modifier = Modifier.navigationBarsPadding()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(0.5.dp)
-                    .background(GlassBorderSubtle)
+                    .background(NeoHairline)
             )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 10.dp),
+                    .padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 12.dp),
                 horizontalArrangement = Arrangement.SpaceAround,
                 verticalAlignment = Alignment.CenterVertically
             ) {

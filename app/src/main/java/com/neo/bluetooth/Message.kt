@@ -40,6 +40,7 @@ sealed class Message {
         val imageWidth: Int? = null,
         val imageHeight: Int? = null,
         val imageData: String? = null,
+        val locationName: String? = null,
         val eventId: String = "",
         val authorDid: String = "",
         val sequenceNum: Long = 0L,
@@ -151,5 +152,43 @@ sealed class Message {
     data class PeerExchange(
         val senderPeerId: String,
         val addresses: List<String>     // Multiaddr strings
+    ) : Message()
+
+    /**
+     * Profile metadata broadcast — propagates a peer's display name, bio, and a
+     * small avatar thumbnail keyed by their DID. Mutable "latest-wins" state
+     * (newest [updatedAt] supersedes), signed by the author's identity key.
+     */
+    @Serializable
+    @SerialName("profile_broadcast")
+    data class ProfileBroadcast(
+        val did: String,
+        val displayName: String,
+        val bio: String = "",
+        val avatarThumbBase64: String? = null,   // small JPEG thumbnail, base64 (NO_WRAP)
+        val updatedAt: Long,
+        val signature: String,
+        val publicKey: String,
+        val keyAlgorithm: String = "RSA",
+        val ttl: Int
+    ) : Message()
+
+    /**
+     * Follow edge broadcast — propagates a directed (un)follow, signed by the
+     * follower's identity key. [active] = false revokes a prior follow.
+     */
+    @Serializable
+    @SerialName("follow_broadcast")
+    data class FollowBroadcast(
+        val id: String,
+        val followerDid: String,
+        val followeeDid: String,
+        val followerName: String,
+        val active: Boolean,
+        val timestamp: Long,
+        val signature: String,
+        val publicKey: String,
+        val keyAlgorithm: String = "RSA",
+        val ttl: Int
     ) : Message()
 }

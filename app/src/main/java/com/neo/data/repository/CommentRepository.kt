@@ -42,6 +42,13 @@ class CommentRepository @Inject constructor(
     fun getRepliesForComment(commentId: String): Flow<List<Comment>> {
         return commentDao.getRepliesForComment(commentId)
     }
+
+    /**
+     * Get every comment (top-level + replies) for a post in a single stream.
+     */
+    fun getAllCommentsForPost(postId: String): Flow<List<Comment>> {
+        return commentDao.getAllCommentsForPost(postId)
+    }
     
     /**
      * Get a specific comment by ID.

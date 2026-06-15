@@ -1,9 +1,7 @@
 package com.neo.ui.screens
 
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -13,7 +11,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
@@ -25,22 +23,20 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neo.data.model.Post
 import com.neo.ui.components.*
 import com.neo.ui.theme.*
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.material3.MaterialTheme
 import com.neo.ui.viewmodel.CreatePostViewModel
 import com.neo.ui.viewmodel.FeedViewModel
@@ -49,6 +45,7 @@ import com.neo.ui.viewmodel.PostStats
 import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
+import java.io.File
 
 @OptIn(ExperimentalMaterialApi::class)
 @Composable
@@ -56,12 +53,13 @@ fun EnhancedFeedScreen(
     viewModel: FeedViewModel,
     postDetailViewModel: PostDetailViewModel,
     currentUserName: String,
+    currentUserImageUri: String? = null,
     onNavigateToProfile: () -> Unit,
     onNavigateToSearch: () -> Unit,
     onNavigateToNotifications: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToBLEStatus: () -> Unit,
-    onNavigateToPostDetail: (Post) -> Unit,
+    onNavigateToUserProfile: (Post) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val pagedPosts = viewModel.pagedPosts.collectAsLazyPagingItems()
@@ -78,7 +76,10 @@ fun EnhancedFeedScreen(
         postDetailViewModel.getPostStatsMapFlow(postIds)
     }.collectAsState(initial = emptyMap())
     val savedPostIds by viewModel.savedPostIds.collectAsState()
+    val profilesByDid by viewModel.profilesByDid.collectAsState()
     var selectedPostForComments by remember { mutableStateOf<Post?>(null) }
+    var viewerImages by remember { mutableStateOf<List<File>>(emptyList()) }
+    val context = LocalContext.current
     val refreshLoadState = pagedPosts.loadState.refresh
     val appendLoadState = pagedPosts.loadState.append
     val isFeedRefreshing = isRefreshing || refreshLoadState is LoadState.Loading
@@ -91,59 +92,98 @@ fun EnhancedFeedScreen(
         }
     )
 
-    var headerHeightPx by remember { mutableIntStateOf(120) }
-
     val lazyListState = rememberLazyListState()
     var isScrollingDown by remember { mutableStateOf(false) }
     LaunchedEffect(lazyListState) {
+        // Pixels of sustained movement in one direction before we flip state —
+        // filters out jitter / overscroll settle that caused the hide↔show bounce.
+        val threshold = 18f
+        var accumulated = 0f
         var prevIndex = lazyListState.firstVisibleItemIndex
         var prevOffset = lazyListState.firstVisibleItemScrollOffset
-        snapshotFlow { lazyListState.firstVisibleItemIndex to lazyListState.firstVisibleItemScrollOffset }
-            .collect { (currentIndex, currentOffset) ->
-                val goingDown = when {
-                    currentIndex > prevIndex -> true
-                    currentIndex < prevIndex -> false
-                    else -> currentOffset > prevOffset
-                }
-                if (goingDown != isScrollingDown) {
-                    isScrollingDown = goingDown
-                }
-                prevIndex = currentIndex
-                prevOffset = currentOffset
+        snapshotFlow {
+            Triple(
+                lazyListState.firstVisibleItemIndex,
+                lazyListState.firstVisibleItemScrollOffset,
+                lazyListState.canScrollForward
+            )
+        }.collect { (currentIndex, currentOffset, canScrollForward) ->
+            // Approximate signed pixel delta since the last emission.
+            val delta = when {
+                currentIndex > prevIndex -> threshold + 1f          // moved down a row
+                currentIndex < prevIndex -> -(threshold + 1f)        // moved up a row
+                else -> (currentOffset - prevOffset).toFloat()
             }
+            prevIndex = currentIndex
+            prevOffset = currentOffset
+
+            // Near the very top: always show, and never hide here. This kills the
+            // bounce on short feeds (a down-drag that can't scroll settles back to
+            // the top) and keeps chrome available when there's nothing to scroll.
+            val nearTop = currentIndex == 0 && currentOffset < 12
+            if (nearTop || (!canScrollForward && !isScrollingDown)) {
+                accumulated = 0f
+                if (isScrollingDown) isScrollingDown = false
+                return@collect
+            }
+
+            // Accumulate movement only while it stays in one direction.
+            accumulated = if (delta > 0f == accumulated >= 0f) accumulated + delta else delta
+            if (accumulated > threshold && !isScrollingDown) {
+                isScrollingDown = true
+                accumulated = 0f
+            } else if (accumulated < -threshold && isScrollingDown) {
+                isScrollingDown = false
+                accumulated = 0f
+            }
+        }
     }
-    val headerTranslationY by animateFloatAsState(
-        targetValue = if (isScrollingDown) -headerHeightPx.toFloat() else 0f,
+
+    // Collapse progress (0 = chrome shown, 1 = hidden). Drives a DRAW-ONLY slide of
+    // the header overlay — the feed underneath is always full height, so hiding the
+    // header never changes the feed's scrollability (no reflow feedback / bounce).
+    val collapse by animateFloatAsState(
+        targetValue = if (isScrollingDown) 1f else 0f,
         animationSpec = tween(durationMillis = 250),
-        label = "header_offset"
+        label = "chrome_collapse"
     )
 
-    Column(modifier = modifier.fillMaxSize()) {
-        EnhancedHeader(
-            modifier = Modifier
-                .onGloballyPositioned { coords ->
-                    headerHeightPx = coords.size.height
-                }
-                .graphicsLayer {
-                    translationY = headerTranslationY
-                },
-            onProfileClick = onNavigateToProfile,
-            onSearchClick = onNavigateToSearch,
-            onNotificationsClick = onNavigateToNotifications,
-            onSettingsClick = onNavigateToSettings,
-            notificationCount = notificationCount
-        )
+    // Header is an OVERLAY on top of the full-height feed; its measured height sets
+    // the feed's top contentPadding so content starts below it (and scrolls under it).
+    val density = LocalDensity.current
+    var headerHeightPx by remember { mutableIntStateOf(0) }
+    val headerHeightDp = with(density) { headerHeightPx.toDp() }
 
-        GradientBackground(modifier = Modifier.weight(1f)) {
+    // BLE mesh card auto-hide: slide up + fade when scrolling down, restore on up.
+    var bleCardHeightPx by remember { mutableIntStateOf(0) }
+    val bleTranslationY by animateFloatAsState(
+        targetValue = if (isScrollingDown) -(bleCardHeightPx.toFloat() + 24f) else 0f,
+        animationSpec = tween(durationMillis = 250),
+        label = "ble_offset"
+    )
+    val bleAlpha by animateFloatAsState(
+        targetValue = if (isScrollingDown) 0f else 1f,
+        animationSpec = tween(durationMillis = 200),
+        label = "ble_alpha"
+    )
+
+    // Total top inset that the chrome (header overlay + BLE card) occupies; the feed
+    // reserves this so its first item starts below the chrome.
+    val chromeInset = headerHeightDp + 112.dp
+
+    Box(modifier = modifier.fillMaxSize()) {
+        GradientBackground(modifier = Modifier.fillMaxSize()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .pullRefresh(pullRefreshState)
             ) {
-                Box(modifier = Modifier.fillMaxSize().padding(top = 120.dp)) {
+                Box(modifier = Modifier.fillMaxSize()) {
                     when {
                     refreshLoadState is LoadState.Loading && pagedPosts.itemCount == 0 -> {
-                        LoadingShimmer()
+                        Box(modifier = Modifier.fillMaxSize().padding(top = chromeInset)) {
+                            LoadingShimmer()
+                        }
                     }
 
                     refreshLoadState is LoadState.Error && pagedPosts.itemCount == 0 -> {
@@ -169,11 +209,11 @@ fun EnhancedFeedScreen(
                         LazyColumn(
                             state = lazyListState,
                             modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(bottom = 16.dp),
+                            contentPadding = PaddingValues(top = chromeInset, bottom = 16.dp),
                             verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
 
-                            if (postCreationState is CreatePostViewModel.UiState.Loading) {
+                            if (postCreationState is CreatePostViewModel.UiState.Creating || postCreationState is CreatePostViewModel.UiState.Broadcasting) {
                                 item {
                                     BackgroundPostingCard()
                                 }
@@ -199,7 +239,13 @@ fun EnhancedFeedScreen(
                                 EnhancedPostCard(
                                     modifier = Modifier.padding(horizontal = 16.dp),
                                     post = post,
-                                    onPostClick = { onNavigateToPostDetail(post) },
+                                    onImageClick = {
+                                        val f = post.imageHash?.let {
+                                            File(context.filesDir, "images/$it.jpg")
+                                        }?.takeIf { it.exists() }
+                                        if (f != null) viewerImages = listOf(f)
+                                    },
+                                    onAuthorClick = { onNavigateToUserProfile(post) },
                                     onLikeClick = {
                                         postDetailViewModel.toggleLike(
                                             postId = post.id,
@@ -211,7 +257,13 @@ fun EnhancedFeedScreen(
                                     isLiked = stats.hasLiked,
                                     isSaved = post.id in savedPostIds,
                                     likeCount = stats.likeCount,
-                                    commentCount = stats.commentCount
+                                    commentCount = stats.commentCount,
+                                    authorImageUri = com.neo.ui.util.resolveAvatar(
+                                        authorId = post.authorId,
+                                        profiles = profilesByDid,
+                                        selfIds = viewModel.selfIds,
+                                        selfImageUri = currentUserImageUri
+                                    )
                                 )
                             }
 
@@ -245,11 +297,17 @@ fun EnhancedFeedScreen(
                     }
                 }
 
-                // BLE Mesh Status Card — always visible regardless of feed state
+                // BLE Mesh Status Card — sits just below the header overlay; auto-hides
+                // on scroll down, returns on scroll up.
                 BLEMeshCard(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = 8.dp),
+                        .padding(top = headerHeightDp + 8.dp)
+                        .onGloballyPositioned { bleCardHeightPx = it.size.height }
+                        .graphicsLayer {
+                            translationY = bleTranslationY
+                            alpha = bleAlpha
+                        },
                     connectedPeers = connectedPeersCount,
                     onClick = onNavigateToBLEStatus
                 )
@@ -257,28 +315,57 @@ fun EnhancedFeedScreen(
                 PullRefreshIndicator(
                     refreshing = isFeedRefreshing,
                     state = pullRefreshState,
-                    modifier = Modifier.align(Alignment.TopCenter),
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = headerHeightDp),
                     backgroundColor = NeoGray900,
                     contentColor = NeoLime
                 )
             }
         }
+
+        // Header OVERLAY — drawn on top of the full-height feed and slid up (draw
+        // only) to hide. Because it's an overlay, hiding it never reflows the feed,
+        // so short feeds can't trigger the hide↔show bounce.
+        EnhancedHeader(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .fillMaxWidth()
+                .onGloballyPositioned { headerHeightPx = it.size.height }
+                .graphicsLayer { translationY = -headerHeightPx * collapse },
+            onProfileClick = onNavigateToProfile,
+            onSearchClick = onNavigateToSearch,
+            onNotificationsClick = onNavigateToNotifications,
+            onSettingsClick = onNavigateToSettings,
+            notificationCount = notificationCount,
+            profileImageUri = currentUserImageUri
+        )
     }
+
+    // Full-screen image viewer — opened by tapping a post image
+    FullScreenMediaViewer(
+        images = viewerImages,
+        initialIndex = 0,
+        visible = viewerImages.isNotEmpty(),
+        onDismiss = { viewerImages = emptyList() }
+    )
 
     // Comments Bottom Sheet
     selectedPostForComments?.let { post ->
-        val topLevelComments by postDetailViewModel
-            .getTopLevelCommentsForPost(post.id)
+        val threads by postDetailViewModel
+            .getCommentThreadsForPost(post.id)
             .collectAsState(initial = emptyList())
 
         CommentsBottomSheet(
             postId = post.id,
-            topLevelComments = topLevelComments,
-            getReplies = { parentId ->
-                postDetailViewModel
-                    .getRepliesForComment(parentId)
-                    .collectAsState(initial = emptyList())
-                    .value
+            threads = threads,
+            avatarFor = { comment ->
+                com.neo.ui.util.resolveAvatar(
+                    authorId = comment.authorId,
+                    profiles = profilesByDid,
+                    selfIds = viewModel.selfIds,
+                    selfImageUri = currentUserImageUri
+                )
             },
             onDismiss = { selectedPostForComments = null },
             onCommentSubmit = { content, parentCommentId ->
@@ -337,8 +424,8 @@ private fun ShimmerCard(
         modifier = modifier
             .fillMaxWidth()
             .height(320.dp),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = NeoGray900)
+        shape = NeoShapes.card,
+        colors = CardDefaults.cardColors(containerColor = SurfaceElevated1)
     ) {
         Box(
             modifier = Modifier
@@ -478,11 +565,10 @@ private fun BLEMeshCard(
                 scaleX = scale,
                 scaleY = scale
             )
-            .liquidGlass(
-                shape = RoundedCornerShape(24.dp),
-                fillColor = GlassWhite16,
-                shadowElevation = if (isPressed) 6.dp else 16.dp,
-                cornerRadius = 72f
+            .neoSurface(
+                shape = NeoShapes.cardLarge,
+                tone = NeoLime,
+                elevation = if (isPressed) 6.dp else NeoElevation.high
             )
             .pointerInput(Unit) {
                 detectTapGestures(
@@ -505,37 +591,18 @@ private fun BLEMeshCard(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Icon in glass container
+                // Icon container — dark on lime for contrast
                 Box(
                     modifier = Modifier
                         .size(48.dp)
-                        .shadow(
-                            elevation = 8.dp,
-                            shape = RoundedCornerShape(14.dp),
-                            ambientColor = NeoLimeGlow10,
-                            spotColor = NeoLimeGlow10
-                        )
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(GlassWhite20)
-                        .drawBehind {
-                            // Specular highlight on icon container
-                            drawRoundRect(
-                                brush = Brush.verticalGradient(
-                                    colorStops = arrayOf(
-                                        0.0f to GlassReflectionEdge,
-                                        0.1f to Color.Transparent,
-                                        1.0f to Color.Transparent
-                                    )
-                                ),
-                                cornerRadius = CornerRadius(42f, 42f)
-                            )
-                        },
+                        .clip(NeoShapes.control)
+                        .background(NeoBlack.copy(alpha = 0.12f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Radio,
                         contentDescription = "BLE Mesh",
-                        tint = NeoLime,
+                        tint = NeoBlack,
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -543,24 +610,25 @@ private fun BLEMeshCard(
                 Column {
                     Text(
                         text = "BLE Mesh Network",
-                        color = TextWhite,
+                        color = NeoBlack,
                         fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.Bold
                     )
                     Text(
                         text = "$connectedPeers peers connected",
-                        color = TextWhite60,
-                        fontSize = 14.sp
+                        color = NeoBlack.copy(alpha = 0.65f),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium
                     )
                 }
             }
 
-            // Arrow icon — unified NeoLime
+            // Arrow icon — dark on lime
             Icon(
-                imageVector = Icons.Default.Add,
+                imageVector = Icons.Default.ChevronRight,
                 contentDescription = "View",
-                tint = NeoLime,
-                modifier = Modifier.size(20.dp)
+                tint = NeoBlack,
+                modifier = Modifier.size(24.dp)
             )
         }
     }
@@ -572,9 +640,7 @@ fun BackgroundPostingCard(modifier: Modifier = Modifier) {
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(GlassWhite8)
-            .border(BorderStroke(0.5.dp, GlassBorderMid), RoundedCornerShape(16.dp))
+            .neoSurface(shape = NeoShapes.card, tone = SurfaceElevated1)
             .padding(16.dp)
     ) {
         Row(

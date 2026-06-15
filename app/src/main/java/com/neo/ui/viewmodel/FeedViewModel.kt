@@ -8,11 +8,14 @@ import androidx.lifecycle.viewModelScope
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.neo.data.model.Post
+import com.neo.data.model.PeerProfile
 import com.neo.data.repository.NotificationRepository
+import com.neo.data.repository.PeerProfileRepository
 import com.neo.data.repository.SavedPostRepository
 import com.neo.domain.port.ISyncPort
 import com.neo.domain.usecase.GetFeedUseCase
 import com.neo.sync.SyncManager
+import com.neo.security.IdentityManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -20,6 +23,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -37,6 +41,8 @@ class FeedViewModel @Inject constructor(
     private val savedPostRepository: SavedPostRepository,
     private val userPreferences: UserPreferences,
     private val cryptoManager: CryptoManager,
+    private val identityManager: IdentityManager,
+    private val peerProfileRepository: PeerProfileRepository,
     private val createPostUseCase: CreatePostUseCase
 ) : AndroidViewModel(application) {
 
@@ -45,6 +51,17 @@ class FeedViewModel @Inject constructor(
 
     val currentUserId: String = cryptoManager.getDeviceId()
 
+    /** The local user's identity DID (posts are authored under this). */
+    val myDid: String = runCatching { identityManager.getDid() }.getOrDefault("")
+
+    /** All ids that represent "me" (DID for posts, deviceId for comments/reactions). */
+    val selfIds: Set<String> = setOf(myDid, currentUserId).filter { it.isNotEmpty() }.toSet()
+
+    /** Peer profiles keyed by DID, for resolving avatars/names of other users. */
+    val profilesByDid: StateFlow<Map<String, PeerProfile>> =
+        peerProfileRepository.observeProfilesByDid()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
     private val _postCreationState = MutableStateFlow<CreatePostViewModel.UiState>(CreatePostViewModel.UiState.Idle)
     val postCreationState: StateFlow<CreatePostViewModel.UiState> = _postCreationState.asStateFlow()
 
@@ -52,14 +69,17 @@ class FeedViewModel @Inject constructor(
         _profileImageUri.value = userPreferences.profileImageUri
     }
 
-    fun createPost(content: String, authorName: String, imageUri: String? = null, onComplete: () -> Unit) {
+    fun createPost(content: String, authorName: String, imageUri: String? = null, locationName: String? = null, onComplete: () -> Unit) {
         viewModelScope.launch {
-            _postCreationState.value = CreatePostViewModel.UiState.Loading
+            _postCreationState.value = CreatePostViewModel.UiState.Creating("Creating post…")
             onComplete() // Dismiss immediately
 
-            val result = createPostUseCase(content, authorName, imageUri)
+            val result = createPostUseCase(content, authorName, imageUri, locationName)
             if (result.isSuccess) {
-                _postCreationState.value = CreatePostViewModel.UiState.Success("Post created successfully!")
+                _postCreationState.value = CreatePostViewModel.UiState.Broadcasting("Broadcasting to mesh…")
+                // Wait for broadcast to propagate, then show success
+                kotlinx.coroutines.delay(2000)
+                _postCreationState.value = CreatePostViewModel.UiState.Success("Post shared with mesh")
             } else {
                 val errorMsg = result.exceptionOrNull()?.message ?: "Failed to create post"
                 _postCreationState.value = CreatePostViewModel.UiState.Error(errorMsg)
@@ -86,6 +106,12 @@ class FeedViewModel @Inject constructor(
 
     val notificationCount: StateFlow<Int> = notificationRepository.getUnreadCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    /** Newest notification (or null) — drives the transient in-app banner. */
+    val latestNotification: StateFlow<com.neo.data.model.Notification?> =
+        notificationRepository.getAllNotifications()
+            .map { it.firstOrNull() }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val savedPostIds: StateFlow<Set<String>> = savedPostRepository.observeSavedPostIds()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())

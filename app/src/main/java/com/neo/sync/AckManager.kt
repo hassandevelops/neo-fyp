@@ -23,9 +23,9 @@ class AckManager @Inject constructor(
 
     companion object {
         private const val TAG = "AckManager"
-        private const val MAX_RETRIES = 3
-        private const val INITIAL_TIMEOUT_MS = 1000L // 1 second
-        private const val MAX_TIMEOUT_MS = 8000L // 8 seconds
+        private const val MAX_RETRIES = 10
+        private const val INITIAL_TIMEOUT_MS = 500L // 0.5 seconds
+        private const val MAX_TIMEOUT_MS = 15000L // 15 seconds
     }
 
     /**
@@ -81,9 +81,9 @@ class AckManager @Inject constructor(
         scope.launch {
             try {
                 val sent = pending.sendFunction(pending.message, pending.peerAddress)
+                Log.e(TAG, "sendWithAck: $messageId initial send result=$sent")
                 if (!sent) {
-                    // Send returned false — connection lost, schedule retry immediately
-                    Log.w(TAG, "Initial send of $messageId returned false, scheduling retry")
+                    Log.e(TAG, "sendWithAck: $messageId initial send FAILED, peer=${pending.peerAddress}, scheduling retry in ${pending.timeoutMs}ms")
                     scheduleRetry(pending)
                 } else {
                     scheduleRetry(pending)
@@ -91,7 +91,7 @@ class AckManager @Inject constructor(
             } catch (e: Exception) {
                 pendingMessages.remove(messageId)
                 pending.onFailure?.invoke("Initial send failed: ${e.message}")
-                Log.e(TAG, "Failed to send message $messageId", e)
+                Log.e(TAG, "sendWithAck: $messageId initial send exception", e)
             }
         }
         

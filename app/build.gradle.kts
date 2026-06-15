@@ -116,6 +116,9 @@ dependencies {
     
     // Image loading
     implementation("io.coil-kt:coil-compose:2.5.0")
+
+    // QR code scanning (Apache 2.0, no Google Play Services dependency)
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     
     // Lifecycle
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.2")

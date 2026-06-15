@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import android.content.Intent
+import android.util.Log
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -52,6 +53,7 @@ fun EnhancedNeoNavigation(
     deepLinkIntent: Intent? = null,
     modifier: Modifier = Modifier
 ) {
+    val TAG = "EnhancedNeoNavigation"
     val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -76,6 +78,31 @@ fun EnhancedNeoNavigation(
     val connectedPeers by viewModel.connectedPeers.collectAsState()
     val currentImageUri by viewModel.profileImageUri.collectAsState()
 
+    // ── Transient in-app notification banner ───────────────────────────────────
+    val latestNotification by viewModel.latestNotification.collectAsState()
+    val bannerProfiles by viewModel.profilesByDid.collectAsState()
+    var bannerNotification by remember { mutableStateOf<com.neo.data.model.Notification?>(null) }
+    var lastSeenNotifId by remember { mutableStateOf<String?>(null) }
+    var bannerInitialized by remember { mutableStateOf(false) }
+    LaunchedEffect(latestNotification?.id) {
+        val n = latestNotification
+        if (n != null) {
+            if (!bannerInitialized) {
+                // Don't banner whatever already exists on app open.
+                lastSeenNotifId = n.id
+                bannerInitialized = true
+            } else if (n.id != lastSeenNotifId) {
+                lastSeenNotifId = n.id
+                // Only surface fresh, unread notifications while not already viewing the list.
+                if (!n.isRead && currentRoute != "notifications") {
+                    bannerNotification = n
+                    kotlinx.coroutines.delay(3000)
+                    bannerNotification = null
+                }
+            }
+        }
+    }
+
     val postCreationState by viewModel.postCreationState.collectAsState()
     LaunchedEffect(postCreationState) {
         when (val state = postCreationState) {
@@ -86,6 +113,12 @@ fun EnhancedNeoNavigation(
             is CreatePostViewModel.UiState.Error -> {
                 snackbarHostState.showSnackbar(state.message)
                 viewModel.resetPostCreationState()
+            }
+            is CreatePostViewModel.UiState.Broadcasting -> {
+                Log.d(TAG, "Broadcasting: ${state.message}")
+            }
+            is CreatePostViewModel.UiState.Creating -> {
+                Log.d(TAG, "Creating: ${state.message}")
             }
             else -> {}
         }
@@ -109,6 +142,7 @@ fun EnhancedNeoNavigation(
         },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
     ) { paddingValues ->
+      Box(modifier = Modifier.fillMaxSize()) {
         NavHost(
             navController = navController,
             startDestination = startDestination,
@@ -123,7 +157,9 @@ fun EnhancedNeoNavigation(
                 popExitTransition = { fadeOut(animationSpec = tween(0)) }
             ) {
                 OnboardingScreen(
-                    onComplete = {
+                    onComplete = { username ->
+                        userPreferences.userName = username
+                        userPreferences.profileUpdatedAt = System.currentTimeMillis()
                         userPreferences.isOnboardingComplete = true
                         navController.navigate("feed") {
                             popUpTo("onboarding") { inclusive = true }
@@ -145,13 +181,18 @@ fun EnhancedNeoNavigation(
                 viewModel = viewModel,
                 postDetailViewModel = postDetailViewModel,
                 currentUserName = userPreferences.userName,
+                currentUserImageUri = currentImageUri,
                 onNavigateToProfile = { navController.navigate("profile") },
                 onNavigateToSearch = { navController.navigate("search") },
                 onNavigateToNotifications = { navController.navigate("notifications") },
                 onNavigateToSettings = { navController.navigate("settings") },
                 onNavigateToBLEStatus = { navController.navigate("ble_status") },
-                onNavigateToPostDetail = { post ->
-                    navController.navigate("post_detail/${post.id}")
+                onNavigateToUserProfile = { post ->
+                    if (post.authorId == viewModel.currentUserId) {
+                        navController.navigate("profile")
+                    } else {
+                        navController.navigate("profile/${post.authorId}")
+                    }
                 }
             )
         }
@@ -173,14 +214,16 @@ fun EnhancedNeoNavigation(
             }
         ) {
             EnhancedCreatePostScreen(
-                onPostClick = { content, authorName, imageUri ->
-                    viewModel.createPost(content, authorName, imageUri) {
+                onPostClick = { content, authorName, imageUri, locationName ->
+                    viewModel.createPost(content, authorName, imageUri, locationName) {
                         navController.popBackStack()
                     }
                 },
                 onDismiss = {
                     navController.popBackStack()
-                }
+                },
+                currentUserName = userPreferences.userName,
+                currentUserImageUri = currentImageUri
             )
         }
         
@@ -193,11 +236,34 @@ fun EnhancedNeoNavigation(
                 popExitTransition = { fadeOut(animationSpec = tween(0)) }
             ) {
             val profileViewModel: ProfileViewModel = hiltViewModel()
+            val profilePostDetailViewModel: com.neo.ui.viewmodel.PostDetailViewModel = hiltViewModel()
             ProfileScreen(
                 viewModel = profileViewModel,
+                postDetailViewModel = profilePostDetailViewModel,
                 onBack = { navController.popBackStack() },
                 onEditProfile = { navController.navigate("edit_profile") },
                 onPostClick = { postId -> navController.navigate("post_detail/$postId") }
+            )
+        }
+
+        // Another user's profile (read-only)
+        composable(
+                "profile/{userId}",
+                arguments = listOf(navArgument("userId") { type = NavType.StringType }),
+                enterTransition = { fadeIn(animationSpec = tween(0)) },
+                exitTransition = { fadeOut(animationSpec = tween(0)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(0)) },
+                popExitTransition = { fadeOut(animationSpec = tween(0)) }
+            ) {
+            val profileViewModel: ProfileViewModel = hiltViewModel()
+            val otherProfilePostDetailViewModel: com.neo.ui.viewmodel.PostDetailViewModel = hiltViewModel()
+            ProfileScreen(
+                viewModel = profileViewModel,
+                postDetailViewModel = otherProfilePostDetailViewModel,
+                onBack = { navController.popBackStack() },
+                onEditProfile = { navController.navigate("edit_profile") },
+                onPostClick = { postId -> navController.navigate("post_detail/$postId") },
+                isCurrentUser = false
             )
         }
 
@@ -235,12 +301,16 @@ fun EnhancedNeoNavigation(
                 popExitTransition = { fadeOut(animationSpec = tween(0)) }
             ) {
             val searchPosts by viewModel.getAllPosts().collectAsState(initial = emptyList())
+            val searchProfiles by viewModel.profilesByDid.collectAsState()
             SearchScreen(
                 posts = searchPosts,
                 onPostClick = { post ->
                     navController.navigate("post_detail/${post.id}")
                 },
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                profiles = searchProfiles,
+                selfIds = viewModel.selfIds,
+                selfImageUri = currentImageUri
             )
         }
         
@@ -255,7 +325,10 @@ fun EnhancedNeoNavigation(
             val notificationsViewModel: NotificationsViewModel = hiltViewModel()
             NotificationsScreen(
                 viewModel = notificationsViewModel,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onNotificationClick = { notification ->
+                    navigateForNotification(navController, notification, viewModel.currentUserId)
+                }
             )
         }
         
@@ -272,7 +345,21 @@ fun EnhancedNeoNavigation(
                 onNavigateToAccount = { navController.navigate("settings/account") },
                 onNavigateToPrivacy = { navController.navigate("settings/privacy") },
                 onNavigateToNotifications = { navController.navigate("settings/notifications") },
-                onNavigateToAbout = { navController.navigate("settings/about") }
+                onNavigateToAbout = { navController.navigate("settings/about") },
+                onNavigateToNetwork = { navController.navigate("settings/network") }
+            )
+        }
+
+        composable(
+                "settings/network",
+                enterTransition = { fadeIn(animationSpec = tween(0)) },
+                exitTransition = { fadeOut(animationSpec = tween(0)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(0)) },
+                popExitTransition = { fadeOut(animationSpec = tween(0)) }
+            ) {
+            NetworkSettingsScreen(
+                userPreferences = userPreferences,
+                onBack = { navController.popBackStack() }
             )
         }
         
@@ -383,6 +470,48 @@ fun EnhancedNeoNavigation(
                 }
             }
         }
+        }
+
+        // Transient in-app banner overlay (above content, below system bars).
+        com.neo.ui.components.NeoNotificationBanner(
+            notification = bannerNotification,
+            avatarUri = bannerNotification?.actorId?.let { bannerProfiles[it]?.avatarPath },
+            visible = bannerNotification != null,
+            onClick = {
+                val n = bannerNotification
+                bannerNotification = null
+                if (n != null) navigateForNotification(navController, n, viewModel.currentUserId)
+            },
+            onDismiss = { bannerNotification = null },
+            modifier = Modifier.align(Alignment.TopCenter)
+        )
+      }
     }
 }
+
+/**
+ * Routes a tapped notification to the content it references:
+ *  - like / comment / reply / repost → the related post detail (via [Notification.postId])
+ *  - follow / mention                → the actor's profile  (via [Notification.targetUserId])
+ * Missing ids are no-ops; the post-detail screen itself handles a deleted post.
+ */
+private fun navigateForNotification(
+    navController: androidx.navigation.NavController,
+    notification: com.neo.data.model.Notification,
+    currentUserId: String
+) {
+    when (notification.type) {
+        "follow", "mention" -> {
+            val userId = notification.targetUserId ?: return
+            if (userId == currentUserId) {
+                navController.navigate("profile")
+            } else {
+                navController.navigate("profile/$userId")
+            }
+        }
+        else -> {
+            val postId = notification.postId ?: return
+            navController.navigate("post_detail/$postId")
+        }
+    }
 }

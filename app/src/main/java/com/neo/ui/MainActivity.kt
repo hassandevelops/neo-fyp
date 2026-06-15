@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import android.os.Bundle
 import android.os.IBinder
 import androidx.activity.ComponentActivity
@@ -25,13 +26,16 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.neo.bluetooth.BluetoothService
 import com.neo.data.preferences.UserPreferences
+import com.neo.discovery.NsdDiscovery
 import com.neo.sync.SyncManager
 import com.neo.ui.navigation.EnhancedNeoNavigation
 import com.neo.ui.theme.NeoTheme
 import com.neo.ui.viewmodel.FeedViewModel
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -45,6 +49,10 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        private const val TAG = "MainActivity"
+    }
+
     private val viewModel: FeedViewModel by viewModels()
 
     @Inject
@@ -52,6 +60,9 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var syncManager: SyncManager
+
+    @Inject
+    lateinit var nsdDiscovery: NsdDiscovery
 
     private var bluetoothService: BluetoothService? = null
     private var isBound = false
@@ -86,6 +97,53 @@ class MainActivity : ComponentActivity() {
             isLibP2pBound = false
         }
     }
+
+    private var nsdJob: kotlinx.coroutines.Job? = null
+
+    override fun onStart() {
+        super.onStart()
+        nsdDiscovery.start()
+        ensureForegroundServicesStarted()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // On Android 15, even onResume may be too early for startForegroundService.
+        // A short delay ensures the Activity is fully in the foreground.
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            ensureForegroundServicesStarted()
+        }, 300)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        nsdDiscovery.stop()
+    }
+
+    private fun ensureForegroundServicesStarted() {
+        // On Android 15+, startForegroundService() from onStart() may be
+        // blocked if the transition from onCreate->onStart is still considered
+        // background. onResume() is fully foreground. We always call
+        // startForegroundService() even if already bound, because bindService
+        // alone does NOT trigger onStartCommand — without startForegroundService
+        // the service never calls startForeground and BLE ops never run.
+        // startForegroundService() for an already-starting service is idempotent.
+        val hasBtPerms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+        } else {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH) == PackageManager.PERMISSION_GRANTED
+        }
+        if (!hasBtPerms) return
+        startBluetoothService()
+        if (!isBound) {
+            bindService(Intent(this, BluetoothService::class.java), serviceConnection, Context.BIND_AUTO_CREATE)
+        }
+        startLibP2pService()
+        if (!isLibP2pBound) {
+            bindService(Intent(this, com.neo.libp2p.LibP2pService::class.java), libP2pServiceConnection, Context.BIND_AUTO_CREATE)
+        }
+    }
     
     private var showPermissionRationale by mutableStateOf(false)
     private val deepLinkIntent = mutableStateOf<Intent?>(null)
@@ -95,16 +153,7 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val allGranted = permissions.values.all { it }
-        if (allGranted) {
-            startBluetoothService()
-            if (!isBound) {
-                bindService(Intent(this, BluetoothService::class.java), serviceConnection, Context.BIND_AUTO_CREATE)
-            }
-            startLibP2pService()
-            if (!isLibP2pBound) {
-                bindService(Intent(this, com.neo.libp2p.LibP2pService::class.java), libP2pServiceConnection, Context.BIND_AUTO_CREATE)
-            }
-        } else {
+        if (!allGranted) {
             showPermissionRationale = true
         }
     }
@@ -112,6 +161,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         window.requestFeature(android.view.Window.FEATURE_NO_TITLE)
         super.onCreate(savedInstanceState)
+        // Defer the NSD collector to onCreate so lifecycleScope is available.
+        nsdJob = lifecycleScope.launch {
+            nsdDiscovery.discoveredMultiaddrs.collect { multiaddr ->
+                Log.d(TAG, "Feeding NSD-discovered multiaddr to libp2p: $multiaddr")
+                libP2pService?.getNode()?.addPeerByMultiaddr(multiaddr)
+            }
+        }
         enableEdgeToEdge(
             statusBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
@@ -173,16 +229,6 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         deepLinkIntent.value = intent
     }
-    
-    override fun onStart() {
-        super.onStart()
-        if (!isBound) {
-            bindService(Intent(this, BluetoothService::class.java), serviceConnection, Context.BIND_AUTO_CREATE)
-        }
-        if (!isLibP2pBound) {
-            bindService(Intent(this, com.neo.libp2p.LibP2pService::class.java), libP2pServiceConnection, Context.BIND_AUTO_CREATE)
-        }
-    }
 
     override fun onDestroy() {
         super.onDestroy()
@@ -197,7 +243,9 @@ class MainActivity : ComponentActivity() {
     }
     
     /**
-     * Request necessary permissions and start Bluetooth service.
+     * Request necessary runtime permissions. Service startup happens in onStart()
+     * where the Activity is in the foreground — required by Android 14+ foreground
+     * service restrictions.
      */
     private fun requestPermissionsAndStartService() {
         val permissions = mutableListOf<String>()
@@ -225,18 +273,7 @@ class MainActivity : ComponentActivity() {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         
-        if (permissionsToRequest.isEmpty()) {
-            // All permissions granted, start and bind services
-            startBluetoothService()
-            if (!isBound) {
-                bindService(Intent(this, BluetoothService::class.java), serviceConnection, Context.BIND_AUTO_CREATE)
-            }
-            startLibP2pService()
-            if (!isLibP2pBound) {
-                bindService(Intent(this, com.neo.libp2p.LibP2pService::class.java), libP2pServiceConnection, Context.BIND_AUTO_CREATE)
-            }
-        } else {
-            // Request permissions
+        if (permissionsToRequest.isNotEmpty()) {
             permissionLauncher.launch(permissionsToRequest.toTypedArray())
         }
     }

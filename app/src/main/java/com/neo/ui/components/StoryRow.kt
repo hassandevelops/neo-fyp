@@ -119,7 +119,7 @@ private fun StoryItem(
             modifier = Modifier.size(68.dp)
         ) {
             // Static border ring
-            val ringColor = if (user.hasStory) NeoLime else BorderWhite10
+            val ringColor = if (user.hasStory) NeoLime else NeoHairline
             Box(
                 modifier = Modifier
                     .size(68.dp)
@@ -132,24 +132,14 @@ private fun StoryItem(
                     .size(62.dp)
                     .padding(2.dp)
                     .clip(CircleShape)
-                    .background(SurfaceWhite10),
+                    .background(SurfaceElevated3),
                 contentAlignment = Alignment.Center
             ) {
-                if (user.avatarUrl != null) {
-                    Image(
-                        painter = rememberAsyncImagePainter(user.avatarUrl),
-                        contentDescription = user.username,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Default.Person,
-                        contentDescription = user.username,
-                        tint = TextWhite60,
-                        modifier = Modifier.size(32.dp)
-                    )
-                }
+                UserAvatar(
+                    imageUri = user.avatarUrl,
+                    size = 58.dp,
+                    contentDescription = user.username
+                )
 
                 // Live badge
                 if (user.isLive) {

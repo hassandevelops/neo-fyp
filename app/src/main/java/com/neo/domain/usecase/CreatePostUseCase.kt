@@ -45,7 +45,8 @@ class CreatePostUseCase @Inject constructor(
     suspend operator fun invoke(
         content: String,
         authorName: String,
-        imageUri: String? = null
+        imageUri: String? = null,
+        locationName: String? = null
     ): Result<Post> {
         return try {
             val identity = identityManager.getOrCreateIdentity()
@@ -111,6 +112,7 @@ class CreatePostUseCase @Inject constructor(
                     put("imageWidth", compressedImage?.width)
                     put("imageHeight", compressedImage?.height)
                     put("imageData", compressedImage?.let { android.util.Base64.encodeToString(it.data, android.util.Base64.NO_WRAP) })
+                    put("locationName", locationName)
                     put("ttl", 7)
                     put("signature", signature)
                     put("publicKey", publicKeyBase64)
@@ -136,6 +138,7 @@ class CreatePostUseCase @Inject constructor(
                 imageSize = compressedImage?.sizeBytes,
                 imageWidth = compressedImage?.width,
                 imageHeight = compressedImage?.height,
+                locationName = locationName,
                 timestamp = timestamp,
                 signature = signature,
                 publicKey = publicKeyBase64,

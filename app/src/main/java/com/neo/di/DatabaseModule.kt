@@ -9,6 +9,8 @@ import com.neo.data.dao.NotificationDao
 import com.neo.data.dao.PostDao
 import com.neo.data.dao.ReactionDao
 import com.neo.data.dao.SavedPostDao
+import com.neo.data.dao.PeerProfileDao
+import com.neo.data.dao.FollowDao
 import com.neo.data.db.AppDatabase
 import dagger.Module
 import dagger.Provides
@@ -70,5 +72,15 @@ object DatabaseModule {
     @Provides
     fun provideEventLogDao(database: AppDatabase): EventLogDao {
         return database.eventLogDao()
+    }
+
+    @Provides
+    fun providePeerProfileDao(database: AppDatabase): PeerProfileDao {
+        return database.peerProfileDao()
+    }
+
+    @Provides
+    fun provideFollowDao(database: AppDatabase): FollowDao {
+        return database.followDao()
     }
 }

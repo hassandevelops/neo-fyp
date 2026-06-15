@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
 import com.neo.ui.components.GradientBackground
+import com.neo.ui.components.UserAvatar
 import com.neo.ui.theme.*
 
 /**
@@ -30,7 +31,7 @@ import com.neo.ui.theme.*
  */
 @Composable
 fun EditProfileScreen(
-    currentName: String = "Neo User",
+    currentName: String = "",
     currentBio: String = "Decentralized social media enthusiast",
     currentImageUri: String? = null,
     onSave: (name: String, bio: String, imageUri: String?) -> Unit,
@@ -134,20 +135,12 @@ fun EditProfileScreen(
                             contentScale = ContentScale.Crop
                         )
                     } else {
-                        // Default avatar
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(NeoGray800),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Person,
-                                contentDescription = "Profile Picture",
-                                tint = TextWhite60,
-                                modifier = Modifier.size(60.dp)
-                            )
-                        }
+                        // Default avatar placeholder
+                        UserAvatar(
+                            imageUri = null,
+                            size = 120.dp,
+                            contentDescription = "Profile Picture"
+                        )
                     }
 
                     // Camera overlay badge
@@ -205,11 +198,13 @@ fun EditProfileScreen(
                             focusedTextColor = TextWhite,
                             unfocusedTextColor = TextWhite,
                             focusedBorderColor = NeoLime,
-                            unfocusedBorderColor = BorderWhite10,
+                            unfocusedBorderColor = NeoHairline,
                             errorBorderColor = MaterialTheme.colorScheme.error,
+                            focusedContainerColor = SurfaceElevated1,
+                            unfocusedContainerColor = SurfaceElevated1,
                             cursorColor = NeoLime
                         ),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = NeoShapes.control,
                         singleLine = true
                     )
                 }
@@ -234,10 +229,12 @@ fun EditProfileScreen(
                             focusedTextColor = TextWhite,
                             unfocusedTextColor = TextWhite,
                             focusedBorderColor = NeoLime,
-                            unfocusedBorderColor = BorderWhite10,
+                            unfocusedBorderColor = NeoHairline,
+                            focusedContainerColor = SurfaceElevated1,
+                            unfocusedContainerColor = SurfaceElevated1,
                             cursorColor = NeoLime
                         ),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = NeoShapes.control,
                         maxLines = 5
                     )
                 }
@@ -248,13 +245,13 @@ fun EditProfileScreen(
                 OutlinedButton(
                     onClick = onCancel,
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = NeoShapes.pill,
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = TextWhite60
                     ),
                     border = ButtonDefaults.outlinedButtonBorder.copy(
                         brush = Brush.linearGradient(
-                            colors = listOf(BorderWhite10, BorderWhite10)
+                            colors = listOf(NeoHairline, NeoHairline)
                         )
                     )
                 ) {

@@ -12,6 +12,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.neo.R
 import com.neo.bluetooth.Message
+import com.neo.data.preferences.UserPreferences
 import com.neo.security.CryptoManager
 import com.neo.transport.TransportPort
 import dagger.hilt.android.AndroidEntryPoint
@@ -25,6 +26,7 @@ import javax.inject.Inject
 class LibP2pService : Service(), TransportPort {
 
     @Inject lateinit var cryptoManager: CryptoManager
+    @Inject lateinit var userPreferences: UserPreferences
 
     companion object {
         private const val TAG = "LibP2pService"
@@ -53,7 +55,8 @@ class LibP2pService : Service(), TransportPort {
             context = this,
             scope = serviceScope,
             deviceId = cryptoManager.getDeviceId(),
-            publicKeyBase64 = cryptoManager.getPublicKeyString()
+            publicKeyBase64 = cryptoManager.getPublicKeyString(),
+            userPreferences = userPreferences
         )
     }
 

@@ -74,6 +74,7 @@ fun NeoTheme(
     MaterialTheme(
         colorScheme = colorScheme,
         typography  = Typography,
+        shapes      = NeoShapes.material,
         content     = content
     )
 }

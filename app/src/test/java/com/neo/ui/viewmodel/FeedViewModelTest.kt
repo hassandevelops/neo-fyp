@@ -33,6 +33,8 @@ class FeedViewModelTest {
     private val syncManager: SyncManager = mockk(relaxed = true)
     private val userPreferences: UserPreferences = mockk(relaxed = true)
     private val cryptoManager: CryptoManager = mockk(relaxed = true)
+    private val identityManager: com.neo.security.IdentityManager = mockk(relaxed = true)
+    private val peerProfileRepository: com.neo.data.repository.PeerProfileRepository = mockk(relaxed = true)
     private val createPostUseCase: CreatePostUseCase = mockk(relaxed = true)
     private val testDispatcher = StandardTestDispatcher()
 
@@ -48,6 +50,8 @@ class FeedViewModelTest {
             savedPostRepository,
             userPreferences,
             cryptoManager,
+            identityManager,
+            peerProfileRepository,
             createPostUseCase
         )
     }
@@ -60,6 +64,9 @@ class FeedViewModelTest {
         every { savedPostRepository.observeSavedPostIds() } returns MutableStateFlow(emptySet())
         every { userPreferences.profileImageUri } returns null
         every { cryptoManager.getDeviceId() } returns "user-1"
+        every { notificationRepository.getUnreadCount() } returns MutableStateFlow(0)
+        every { notificationRepository.getAllNotifications() } returns MutableStateFlow(emptyList())
+        every { peerProfileRepository.observeProfilesByDid() } returns MutableStateFlow(emptyMap())
     }
 
     @After

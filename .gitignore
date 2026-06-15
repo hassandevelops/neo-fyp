@@ -27,3 +27,15 @@ captures
 *.pptx
 *.log
 /Dark Mode Social Feed UI/
+
+# Secrets — never commit
+go-libp2p-wrapper/neoserver.key
+*.key
+
+# Large built Go binaries (build locally via go-libp2p-wrapper/build.sh)
+/bootstrap_new
+go-libp2p-wrapper/bootstrap_server
+go-libp2p-wrapper/neoserver_desktop
+
+# Stray nested app copy from a mis-targeted build
+go-libp2p-wrapper/app/

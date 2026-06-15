@@ -6,9 +6,11 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattServer
 import android.os.Build
 import android.util.Log
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.sync.Mutex
@@ -38,15 +40,32 @@ class GattPeerConnection(
         private const val CHUNKED_FLAG: Byte = 0x01
         private const val SINGLE_FLAG: Byte = 0x00
         private const val MAX_MESSAGE_BYTES = 4 * 1024 * 1024
-    private const val CHUNK_HEADER_SIZE = 10
-    private const val DEFAULT_MTU = 23
-    private const val FRAME_DELAY_MS = 100L
+        private const val CHUNK_HEADER_SIZE = 10
+        private const val DEFAULT_MTU = 23
+        private const val WRITE_RETRY_COUNT = 3
+        // How long to wait for the onCharacteristicWrite back-pressure callback
+        // before assuming the frame was queued (fallback for devices that don't
+        // reliably deliver the callback for WRITE_TYPE_NO_RESPONSE).
+        private const val WRITE_ACK_TIMEOUT_MS = 150L
+        // Backoff when the BLE stack reports it is busy (buffer full).
+        private const val WRITE_BUSY_BACKOFF_MS = 15L
     }
 
     private var negotiatedMtu: Int = DEFAULT_MTU
     @Volatile private var _isConnected = false
 
     private val sendMutex = Mutex()
+
+    // The frame currently awaiting its onCharacteristicWrite callback. Completed
+    // by onFrameWritten() to provide flow control: we only issue the next frame
+    // once the stack has accepted the previous one. Carries a sequence token so a
+    // delayed/duplicate callback for an already-resolved frame cannot complete a
+    // later frame's deferred. Only one write is in flight at a time (all writes go
+    // through sendMutex), but the take-and-null in onFrameWritten closes the race
+    // where a stale callback arrives after this frame timed out.
+    private class PendingWrite(val seq: Long, val deferred: CompletableDeferred<Int>)
+    @Volatile private var pendingWrite: PendingWrite? = null
+    private var writeSeqCounter: Long = 0 // only mutated under sendMutex
 
     private var lastSeqId: Long = 0
     private val pendingAssemblies = ConcurrentHashMap<Long, PendingMessage>()
@@ -91,9 +110,13 @@ class GattPeerConnection(
             try {
                 val json = MessageProtocol.serialize(message)
                 val data = json.toByteArray(Charsets.UTF_8)
-                sendData(data)
-                Log.d(TAG, "Sent ${message::class.simpleName} to ${device.address}")
-                true
+                if (sendData(data)) {
+                    Log.d(TAG, "Sent ${message::class.simpleName} to ${device.address}")
+                    true
+                } else {
+                    Log.w(TAG, "sendData failed for ${message::class.simpleName} to ${device.address}")
+                    false
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending message: ${e.message}")
                 false
@@ -101,7 +124,7 @@ class GattPeerConnection(
         }
     }
 
-    private suspend fun sendData(data: ByteArray) {
+    private suspend fun sendData(data: ByteArray): Boolean {
         val maxFrameSize = maxOf(minOf(negotiatedMtu - 1, 500), 20)
 
         if (data.size + 1 <= maxFrameSize) {
@@ -109,13 +132,17 @@ class GattPeerConnection(
             frame[0] = SINGLE_FLAG
             System.arraycopy(data, 0, frame, 1, data.size)
             Log.d(TAG, "sendData: single frame=${frame.size}B data=${data.size}B mtu=$negotiatedMtu maxFrame=$maxFrameSize")
-            writeFrame(frame)
+            return writeFrame(frame)
         } else {
             val seqId = ++lastSeqId
             val maxChunkData = maxFrameSize - CHUNK_HEADER_SIZE
             val totalChunks = (data.size + maxChunkData - 1) / maxChunkData
 
             for (i in 0 until totalChunks) {
+                if (!_isConnected) {
+                    Log.w(TAG, "sendData: connection lost during chunk send at $i/$totalChunks")
+                    return false
+                }
                 val offset = i * maxChunkData
                 val chunkSize = minOf(maxChunkData, data.size - offset)
                 val frame = ByteArray(CHUNK_HEADER_SIZE + chunkSize)
@@ -131,36 +158,119 @@ class GattPeerConnection(
                 frame[8] = ((i shr 8) and 0xFF).toByte()
                 System.arraycopy(data, offset, frame, CHUNK_HEADER_SIZE, chunkSize)
                 Log.d(TAG, "sendData: chunk[$i/$totalChunks] seq=$seqId frame=${frame.size}B chunkData=$chunkSize mtu=$negotiatedMtu maxFrame=$maxFrameSize")
-                writeFrame(frame)
-                if (i < totalChunks - 1) {
-                    delay(FRAME_DELAY_MS)
+                if (!writeFrame(frame)) {
+                    Log.w(TAG, "sendData: frame write failed at $i/$totalChunks, aborting")
+                    return false
                 }
+                // No fixed inter-frame delay: writeFrame() blocks until the
+                // stack accepts the frame (onCharacteristicWrite), which paces us.
             }
+            return true
         }
     }
 
-    private fun writeFrame(frame: ByteArray) {
-        if (gatt != null && remoteDataChar != null) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                gatt.writeCharacteristic(remoteDataChar, frame, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
-            } else {
-                @Suppress("DEPRECATION")
-                remoteDataChar.value = frame
-                @Suppress("DEPRECATION")
-                remoteDataChar.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                @Suppress("DEPRECATION")
-                gatt.writeCharacteristic(remoteDataChar)
-            }
-        } else if (gattServer != null && localNotifyChar != null) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                gattServer.notifyCharacteristicChanged(device, localNotifyChar, false, frame)
-            } else {
-                @Suppress("DEPRECATION")
-                localNotifyChar.value = frame
-                @Suppress("DEPRECATION")
-                gattServer.notifyCharacteristicChanged(device, localNotifyChar, false)
+    /**
+     * Write a single BLE frame with proper flow control.
+     *
+     * For the client (writeCharacteristic) path we issue the write and then wait
+     * for [onFrameWritten] (driven by the GATT onCharacteristicWrite callback)
+     * before returning, so the caller never out-runs the BLE stack's buffer. If
+     * the stack reports "busy" we back off and retry instead of aborting the
+     * whole message. The notify (server) path has no equivalent callback, so it
+     * keeps the previous best-effort behaviour.
+     */
+    @Suppress("DEPRECATION")
+    private suspend fun writeFrame(frame: ByteArray): Boolean {
+        if (!_isConnected) return false
+
+        // Notify/server path (rarely used — connections are created client-side).
+        if (gatt == null || remoteDataChar == null) {
+            return try {
+                if (gattServer != null && localNotifyChar != null) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        gattServer.notifyCharacteristicChanged(device, localNotifyChar, false, frame)
+                    } else {
+                        localNotifyChar.value = frame
+                        gattServer.notifyCharacteristicChanged(device, localNotifyChar, false)
+                    }
+                    true
+                } else {
+                    false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "writeFrame: notify exception to ${device.address}: ${e.message}")
+                false
             }
         }
+
+        var attempt = 0
+        while (attempt < WRITE_RETRY_COUNT) {
+            if (!_isConnected) return false
+
+            val ack = CompletableDeferred<Int>()
+            val pw = PendingWrite(++writeSeqCounter, ack)
+            pendingWrite = pw
+
+            val initiated = try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    gatt.writeCharacteristic(
+                        remoteDataChar,
+                        frame,
+                        BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                    ) == android.bluetooth.BluetoothGatt.GATT_SUCCESS
+                } else {
+                    remoteDataChar.value = frame
+                    remoteDataChar.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                    gatt.writeCharacteristic(remoteDataChar)
+                }
+            } catch (e: Exception) {
+                if (pendingWrite === pw) pendingWrite = null
+                Log.e(TAG, "writeFrame: exception writing to ${device.address}: ${e.message}")
+                return false
+            }
+
+            if (!initiated) {
+                // Stack buffer is full / busy — back off and retry this frame
+                // rather than dropping it and aborting the whole message.
+                if (pendingWrite === pw) pendingWrite = null
+                attempt++
+                Log.d(TAG, "writeFrame: stack busy for ${device.address}, retry $attempt/$WRITE_RETRY_COUNT")
+                delay(WRITE_BUSY_BACKOFF_MS)
+                continue
+            }
+
+            // Back-pressure: wait until the stack confirms it accepted the frame.
+            // Fall back to assuming success if the device never delivers the
+            // callback, so we never stall the pipeline indefinitely.
+            val status = withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { ack.await() }
+            // Only clear if no newer write has taken the slot (e.g. after a
+            // timeout the next iteration/frame may already own pendingWrite).
+            if (pendingWrite === pw) pendingWrite = null
+
+            return when {
+                status == null -> true // no callback on this device: assume queued
+                status == android.bluetooth.BluetoothGatt.GATT_SUCCESS -> true
+                else -> {
+                    Log.w(TAG, "writeFrame: write callback status=$status for ${device.address}")
+                    false
+                }
+            }
+        }
+
+        Log.w(TAG, "writeFrame: stack busy after $WRITE_RETRY_COUNT attempts for ${device.address}")
+        return false
+    }
+
+    /**
+     * Called from the GATT onCharacteristicWrite callback to release the frame
+     * currently awaiting confirmation in [writeFrame]. Take-and-null so a late or
+     * duplicate callback for an already-resolved frame is ignored and cannot
+     * complete a subsequent frame's deferred.
+     */
+    fun onFrameWritten(status: Int) {
+        val pw = pendingWrite ?: return
+        pendingWrite = null
+        pw.deferred.complete(status)
     }
 
     fun onDataReceived(data: ByteArray) {

@@ -1,5 +1,9 @@
 package com.neo.ui.screens
 
+import android.app.Activity
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -9,12 +13,251 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.neo.data.preferences.UserPreferences
 import com.neo.ui.components.GradientBackground
+import com.neo.ui.components.organicPattern
+import com.neo.ui.screens.settings.QrScanActivity
 import com.neo.ui.theme.*
 import androidx.compose.material3.MaterialTheme
+
+/**
+ * Network Settings Screen
+ *
+ * Lets the user configure a custom bootstrap multiaddr via QR code scan
+ * or manual entry, and toggle the bootstrap override. The current
+ * multiaddr is shown read-only.
+ */
+@Composable
+fun NetworkSettingsScreen(
+    userPreferences: UserPreferences,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var enabled by remember { mutableStateOf(userPreferences.bootstrapEnabled) }
+    var current by remember { mutableStateOf(userPreferences.bootstrapMultiaddr.orEmpty()) }
+    var statusMessage by remember { mutableStateOf<String?>(null) }
+
+    val qrLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val multiaddr = result.data?.getStringExtra(QrScanActivity.EXTRA_MULTIADDR)
+            if (!multiaddr.isNullOrBlank()) {
+                current = multiaddr
+                enabled = true
+                userPreferences.bootstrapMultiaddr = multiaddr
+                userPreferences.bootstrapEnabled = true
+                statusMessage = "Bootstrap captured. Reconnecting in a few seconds…"
+            }
+        } else {
+            val err = result.data?.getStringExtra(QrScanActivity.EXTRA_ERROR)
+            if (err != null) statusMessage = "Scan failed: $err"
+        }
+    }
+
+    fun openQrScanner() {
+        val intent = Intent(context, QrScanActivity::class.java)
+        qrLauncher.launch(intent)
+    }
+
+    fun clearOverride() {
+        userPreferences.bootstrapMultiaddr = null
+        userPreferences.bootstrapEnabled = false
+        current = ""
+        enabled = false
+        statusMessage = "Bootstrap override cleared. Reconnecting with defaults…"
+    }
+
+    GradientBackground(modifier = modifier) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = NeoBlack
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = "Back",
+                            tint = TextWhite
+                        )
+                    }
+                    Text(
+                        text = "Network Settings",
+                        color = TextWhite,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = NeoShapes.card,
+                        colors = CardDefaults.cardColors(containerColor = SurfaceElevated1)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                text = "Bootstrap Override",
+                                color = TextWhite,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "By default Neo connects to public IPFS DHT nodes. " +
+                                    "To use a self-hosted bootstrap (a friend's server, your " +
+                                    "own machine, or any other user-operated relay), scan its " +
+                                    "QR code here.",
+                                color = TextWhite80,
+                                fontSize = 14.sp,
+                                lineHeight = 20.sp
+                            )
+
+                            Button(
+                                onClick = { openQrScanner() },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = NeoShapes.pill,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = NeoLime,
+                                    contentColor = NeoBlack
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.QrCodeScanner,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.size(8.dp))
+                                Text("Scan Bootstrap QR Code")
+                            }
+                        }
+                    }
+                }
+
+                if (current.isNotBlank()) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = NeoShapes.card,
+                            colors = CardDefaults.cardColors(containerColor = SurfaceElevated1)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Current Bootstrap",
+                                    color = TextWhite60,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = current,
+                                    color = TextWhite,
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp
+                                )
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    SwitchSettingCard(
+                        icon = Icons.Default.Cloud,
+                        title = "Use Custom Bootstrap",
+                        subtitle = "If off, Neo connects to public IPFS DHT nodes",
+                        checked = enabled,
+                        onCheckedChange = {
+                            enabled = it
+                            userPreferences.bootstrapEnabled = it
+                            statusMessage = "Setting saved. Reconnecting…"
+                        },
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                if (current.isNotBlank()) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = NeoShapes.card,
+                            colors = CardDefaults.cardColors(containerColor = SurfaceElevated1)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.size(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Clear Override",
+                                        color = TextWhite,
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = "Revert to public IPFS DHT bootstrap nodes",
+                                        color = TextWhite60,
+                                        fontSize = 14.sp
+                                    )
+                                }
+                                TextButton(onClick = { clearOverride() }) {
+                                    Text("Clear", color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                statusMessage?.let { msg ->
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = NeoShapes.control,
+                            colors = CardDefaults.cardColors(containerColor = SurfaceElevated1)
+                        ) {
+                            Text(
+                                text = msg,
+                                color = TextWhite80,
+                                fontSize = 13.sp,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 /**
  * Account Settings Screen
@@ -328,9 +571,9 @@ fun AboutScreen(
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = NeoShapes.cardLarge,
                         colors = CardDefaults.cardColors(
-                            containerColor = SurfaceWhite5
+                            containerColor = SurfaceElevated1
                         )
                     ) {
                         Column(
@@ -411,14 +654,15 @@ private fun SettingCard(
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = NeoShapes.card,
         colors = CardDefaults.cardColors(
-            containerColor = SurfaceWhite5
+            containerColor = SurfaceElevated1
         )
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .organicPattern(SurfaceElevated1, richness = 4)
                 .padding(16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -459,14 +703,15 @@ private fun SwitchSettingCard(
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = NeoShapes.card,
         colors = CardDefaults.cardColors(
-            containerColor = SurfaceWhite5
+            containerColor = SurfaceElevated1
         )
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .organicPattern(SurfaceElevated1, richness = 4)
                 .padding(16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -511,13 +756,16 @@ private fun InfoCard(
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = NeoShapes.card,
         colors = CardDefaults.cardColors(
-            containerColor = SurfaceWhite5
+            containerColor = SurfaceElevated1
         )
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .organicPattern(SurfaceElevated1, richness = 4)
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(

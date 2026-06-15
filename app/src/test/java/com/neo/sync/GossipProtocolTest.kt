@@ -40,6 +40,8 @@ class GossipProtocolTest {
     private lateinit var blockedUserRepository: BlockedUserRepository
     private lateinit var commentRepository: CommentRepository
     private lateinit var reactionRepository: ReactionRepository
+    private lateinit var notificationRepository: com.neo.data.repository.NotificationRepository
+    private lateinit var identityManager: com.neo.security.IdentityManager
     private lateinit var ackManager: AckManager
     private lateinit var conflictResolver: ConflictResolver
     private lateinit var seenMessageCache: SeenMessageCache
@@ -56,6 +58,8 @@ class GossipProtocolTest {
         blockedUserRepository = mockk()
         commentRepository = mockk(relaxed = true)
         reactionRepository = mockk(relaxed = true)
+        notificationRepository = mockk(relaxed = true)
+        identityManager = mockk(relaxed = true)
         ackManager = mockk(relaxed = true)
         conflictResolver = mockk()
         seenMessageCache = mockk()
@@ -72,6 +76,12 @@ class GossipProtocolTest {
             blockedUserRepository = blockedUserRepository,
             commentRepository = commentRepository,
             reactionRepository = reactionRepository,
+            notificationRepository = notificationRepository,
+            peerProfileRepository = mockk(relaxed = true),
+            followRepository = mockk(relaxed = true),
+            userPreferences = mockk(relaxed = true),
+            avatarStore = mockk(relaxed = true),
+            identityManager = identityManager,
             ackManager = ackManager,
             conflictResolver = conflictResolver,
             seenMessageCache = seenMessageCache,
