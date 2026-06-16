@@ -300,24 +300,14 @@ func (n *Libp2pNode) handleProxyStream(s network.Stream) {
 // peer_connected for peerID, forwards inbound lines (from the buffered reader,
 // which may already hold gossip bytes pulled in with the header) as message
 // events, and registers the stream so sendMessage replies over the same tunnel.
+// serviceProxyTunnel services an INBOUND proxied stream as a READ-ONLY gossip
+// delivery channel. We deliberately do NOT register it in activeStreams: the
+// reverse direction of a relayed stream does not deliver reads to the far end,
+// so replies must go out over THIS node's OWN outbound tunnel (opened by the
+// discovery loop), not back through an inbound one. We emit peer_connected so
+// the app sees the peer, pump inbound lines, and never touch the send path.
 func (n *Libp2pNode) serviceProxyTunnel(peerID string, s network.Stream, buffered *bufio.Reader) {
 	defer s.Close()
-	defer func() {
-		n.lock.Lock()
-		if n.activeStreams[peerID] == s {
-			delete(n.activeStreams, peerID)
-		}
-		n.lock.Unlock()
-		n.sendEvent(Event{Event: "peer_disconnected", PeerID: peerID})
-	}()
-
-	n.lock.Lock()
-	if existing, exists := n.activeStreams[peerID]; exists && existing != s {
-		existing.Close()
-	}
-	n.activeStreams[peerID] = s
-	n.lock.Unlock()
-
 	n.sendEvent(Event{Event: "peer_connected", PeerID: peerID})
 
 	for {
@@ -1066,22 +1056,12 @@ func (n *Libp2pNode) discoveryLoop() {
 						log.Printf("discover: PX with %s failed: %v", pid, pxErr)
 					}
 					// Fall back to proxy through custom bootstrap.
-					// Soft tiebreaker: the lexicographically smaller id initiates
-					// immediately; the larger waits one discovery interval and only
-					// initiates if it STILL has no stream. This avoids both opening
-					// at once (flap) while ensuring that if the initiator's tunnel
-					// dies, the other side rebuilds it (fixes one-directional sync).
-					if n.host.ID().String() >= pid.String() {
-						log.Printf("proxy: deferring to %s to initiate tunnel (will retry if absent)", pid)
-						time.Sleep(12 * time.Second)
-						n.lock.RLock()
-						_, have := n.activeStreams[pid.String()]
-						n.lock.RUnlock()
-						if have {
-							return
-						}
-						log.Printf("proxy: %s did not initiate, taking over", pid)
-					}
+					// BOTH peers open their OWN outbound send-tunnel (no tiebreaker):
+					// each direction is a separate forward-only relayed stream, because
+					// the reverse direction of a relayed stream does not deliver reads.
+					// I SEND on the tunnel I open (registered in activeStreams); I
+					// RECEIVE the peer's posts on the peer's own outbound tunnel, which
+					// arrives here as an inbound stream serviced read-only.
 					n.customBootMu.Lock()
 					proxyID := peer.ID("")
 					if len(n.customBootIDs) > 0 {
