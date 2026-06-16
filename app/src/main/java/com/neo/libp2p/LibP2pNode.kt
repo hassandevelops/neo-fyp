@@ -35,6 +35,15 @@ class LibP2pNode(
     val connectedPeers: StateFlow<List<String>> get() = impl.connectedPeers
     val incomingMessages: Flow<Pair<String, Message>> get() = impl.incomingMessages
 
+    val dhtPeerCount: StateFlow<Int> get() = impl.dhtPeerCount
+    val bootstrapConnected: StateFlow<Boolean> get() = impl.bootstrapConnected
+    val lastError: StateFlow<String?> get() = impl.lastError
+    val reachability: StateFlow<String> get() = impl.reachability
+    val connectInfo: StateFlow<ConnectInfo?> get() = impl.connectInfo
+
+    fun requestConnectInfo() = impl.requestConnectInfo()
+    fun setBootstrap(multiaddr: String) = impl.setBootstrap(multiaddr)
+
     fun start() = impl.start()
     fun stop() = impl.stop()
 

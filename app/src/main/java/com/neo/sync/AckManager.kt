@@ -81,13 +81,14 @@ class AckManager @Inject constructor(
         scope.launch {
             try {
                 val sent = pending.sendFunction(pending.message, pending.peerAddress)
-                Log.e(TAG, "sendWithAck: $messageId initial send result=$sent")
+                Log.d(TAG, "sendWithAck: $messageId initial send result=$sent")
                 if (!sent) {
-                    Log.e(TAG, "sendWithAck: $messageId initial send FAILED, peer=${pending.peerAddress}, scheduling retry in ${pending.timeoutMs}ms")
-                    scheduleRetry(pending)
-                } else {
-                    scheduleRetry(pending)
+                    Log.w(TAG, "sendWithAck: $messageId initial send FAILED, peer=${pending.peerAddress}, scheduling retry in ${pending.timeoutMs}ms")
                 }
+                // Schedule a retry regardless: a successful socket write is not an
+                // ACK. The retry job is cancelled in handleAck() once the peer
+                // confirms receipt, so this only re-sends if no ACK arrives.
+                scheduleRetry(pending)
             } catch (e: Exception) {
                 pendingMessages.remove(messageId)
                 pending.onFailure?.invoke("Initial send failed: ${e.message}")

@@ -55,6 +55,7 @@ fun EnhancedBottomNavigation(
                 // Home
                 NavIcon(
                     icon = if (selectedRoute == "feed") Icons.Filled.Home else Icons.Outlined.Home,
+                    label = "Home",
                     selected = selectedRoute == "feed",
                     onClick = { onNavigate("feed") }
                 )
@@ -62,6 +63,7 @@ fun EnhancedBottomNavigation(
                 // Search
                 NavIcon(
                     icon = if (selectedRoute == "search") Icons.Filled.Search else Icons.Outlined.Search,
+                    label = "Search",
                     selected = selectedRoute == "search",
                     onClick = { onNavigate("search") }
                 )
@@ -92,6 +94,7 @@ fun EnhancedBottomNavigation(
                 // Bell
                 NavIcon(
                     icon = if (selectedRoute == "notifications") Icons.Filled.Notifications else Icons.Outlined.Notifications,
+                    label = "Notifications",
                     selected = selectedRoute == "notifications",
                     onClick = { onNavigate("notifications") }
                 )
@@ -99,6 +102,7 @@ fun EnhancedBottomNavigation(
                 // Profile
                 NavIcon(
                     icon = if (selectedRoute == "profile") Icons.Filled.Person else Icons.Outlined.Person,
+                    label = "Profile",
                     selected = selectedRoute == "profile",
                     onClick = { onNavigate("profile") }
                 )
@@ -110,6 +114,7 @@ fun EnhancedBottomNavigation(
 @Composable
 private fun NavIcon(
     icon: ImageVector,
+    label: String,
     selected: Boolean,
     onClick: () -> Unit
 ) {
@@ -117,7 +122,7 @@ private fun NavIcon(
     IconButton(onClick = onClick, modifier = Modifier.size(44.dp)) {
         Icon(
             imageVector = icon,
-            contentDescription = null,
+            contentDescription = label,
             tint = tint,
             modifier = Modifier.size(24.dp)
         )

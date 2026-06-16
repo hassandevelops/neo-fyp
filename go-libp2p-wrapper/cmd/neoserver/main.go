@@ -12,7 +12,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -65,6 +64,7 @@ type Event struct {
 	Addrs   string `json:"addrs,omitempty"`
 	Count   int    `json:"count"`
 	Error   string `json:"error,omitempty"`
+	Status  string `json:"status,omitempty"` // AutoNAT reachability: public|private|unknown
 }
 
 // -------- Bootstrap peers --------
@@ -72,16 +72,12 @@ type Event struct {
 //   1. File: "bootstrap.conf" - one multiaddr per line
 //   2. Env: NEO_BOOTSTRAP - comma-separated multiaddrs
 //   3. Fallback: hardcoded default
-var defaultBootstrapPeers = []string{
-	// Custom bootstrap server (LAN/intranet)
-	"/ip4/192.168.100.180/tcp/4001/p2p/12D3KooWRr67qtQrb3aHNkjQM2fABs1QbJwLwzmNzAkWp1W8MFoh",
-	// Public IPFS DHT bootstrap peers for cross-network discovery via global DHT
-	"/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
-	"/ip4/104.236.179.241/tcp/4001/p2p/QmSoLPppuBtQSGwKDZT2M73ULpjvfd3aZ6ha4oFGL1KrGM",
-	"/ip4/128.199.219.111/tcp/4001/p2p/QmSoLSafTMBsPKadTEgaXctDQVcqN88CNLHXMkTNwMKPnu",
-	"/ip4/104.236.76.40/tcp/4001/p2p/QmSoLV4Bbm51jM9C4gDYZQ9Cy3U6aXMJDAbzgu2fzaDs64",
-	"/ip4/178.62.158.247/tcp/4001/p2p/QmSoLer265NRgSp2LA3dPaeykiS1J6DifTC88f5uVQKNAd",
-}
+// No public/default bootstrap peers. Neo does not touch public IPFS
+// infrastructure: same-Wi-Fi discovery is handled by mDNS/Android NSD, and
+// cross-network sync goes through a bootstrap the user runs and scans via QR
+// (set_bootstrap / the neo://bootstrap deep link). This keeps the user off the
+// global public DHT, so the node never exposes its IP to random internet peers.
+var defaultBootstrapPeers = []string{}
 
 var bootstrapPeers = loadBootstrapPeers()
 
@@ -164,6 +160,20 @@ type Libp2pNode struct {
 	pubsub        *pubsub.PubSub
 	topic         *pubsub.Topic
 	topicSub      *pubsub.Subscription
+	reachability  network.Reachability // AutoNAT verdict; guarded by lock
+}
+
+// reachabilityString maps a libp2p reachability verdict to the wire string
+// shared with the Kotlin app and surfaced in the UI.
+func reachabilityString(r network.Reachability) string {
+	switch r {
+	case network.ReachabilityPublic:
+		return "public"
+	case network.ReachabilityPrivate:
+		return "private"
+	default:
+		return "unknown"
+	}
 }
 
 // sendEvent writes a JSON event to the Kotlin app via TCP
@@ -260,11 +270,22 @@ func (n *Libp2pNode) sendMessage(peerID string, message string) error {
 }
 
 func (n *Libp2pNode) handleStream(s network.Stream) {
+	n.serviceStream(s)
+}
+
+// serviceStream registers a /neo/gossip stream as the active stream for its
+// peer, emits peer_connected, and pumps inbound lines to the Kotlin app until
+// the stream closes. Used for BOTH inbound streams (handleStream) and the
+// outbound stream opened by promoteBootstrapToPeer — without a reader loop an
+// outbound stream is never serviced and sendMessage writes silently fail.
+func (n *Libp2pNode) serviceStream(s network.Stream) {
 	peerID := s.Conn().RemotePeer().String()
 	defer s.Close()
 	defer func() {
 		n.lock.Lock()
-		delete(n.activeStreams, peerID)
+		if n.activeStreams[peerID] == s {
+			delete(n.activeStreams, peerID)
+		}
 		n.lock.Unlock()
 		n.sendEvent(Event{Event: "peer_disconnected", PeerID: peerID})
 	}()
@@ -511,14 +532,19 @@ func newNode(ctx context.Context, privKeyBytes []byte, port int) (*Libp2pNode, e
 		libp2p.DefaultTransports,
 		libp2p.DefaultMuxers,
 		libp2p.DefaultSecurity,
+		// Keep the ability to USE a circuit relay and hole-punch, so a
+		// user-operated Neo bootstrap can relay for NAT'd peers. We intentionally
+		// do NOT enable AutoRelay against public IPFS relays — Neo no longer
+		// touches public IPFS infrastructure. Cross-network delivery goes through
+		// a bootstrap the user runs (scanned via QR), keeping the node off the
+		// public DHT and not exposing the user's IP to random internet peers.
 		libp2p.EnableRelay(),
 		libp2p.EnableHolePunching(),
-		libp2p.EnableAutoRelayWithStaticRelays([]peer.AddrInfo{
-			{ID: peer.ID("QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ"), Addrs: []ma.Multiaddr{ma.StringCast("/ip4/104.131.131.82/tcp/4001")}},
-			{ID: peer.ID("QmSoLPppuBtQSGwKDZT2M73ULpjvfd3aZ6ha4oFGL1KrGM"), Addrs: []ma.Multiaddr{ma.StringCast("/ip4/104.236.179.241/tcp/4001")}},
-			{ID: peer.ID("QmSoLSafTMBsPKadTEgaXctDQVcqN88CNLHXMkTNwMKPnu"), Addrs: []ma.Multiaddr{ma.StringCast("/ip4/128.199.219.111/tcp/4001")}},
-		}),
 		libp2p.NATPortMap(),
+		// AutoNAT: lets this node learn its own reachability (public vs private)
+		// and answer reachability probes for other Neo peers. This is what drives
+		// the "super-peer" role detection surfaced in the app.
+		libp2p.EnableNATService(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("new host: %w", err)
@@ -593,6 +619,29 @@ func newNode(ctx context.Context, privKeyBytes []byte, port int) (*Libp2pNode, e
 		}()
 	}
 
+	// AutoNAT reachability subscription: when libp2p determines whether this
+	// node is publicly reachable, record it and push the verdict to the app.
+	// A "public" node can serve as a relay/bootstrap for other Neo peers.
+	if rsub, rerr := routedHost.EventBus().Subscribe(&event.EvtLocalReachabilityChanged{}, eventbus.BufSize(8)); rerr != nil {
+		log.Printf("reachability subscribe: %v", rerr)
+	} else {
+		go func() {
+			defer rsub.Close()
+			for evt := range rsub.Out() {
+				rEvt, ok := evt.(event.EvtLocalReachabilityChanged)
+				if !ok {
+					continue
+				}
+				node.lock.Lock()
+				node.reachability = rEvt.Reachability
+				node.lock.Unlock()
+				status := reachabilityString(rEvt.Reachability)
+				log.Printf("reachability changed: %s", status)
+				node.sendEvent(Event{Event: "reachability", Status: status})
+			}
+		}()
+	}
+
 	// mDNS for LAN discovery
 	// NOTE: zeroconf uses netlink syscalls to enumerate network interfaces.
 	// Android sandbox blocks these (route ip+net: netlinkrib: permission denied).
@@ -622,38 +671,9 @@ func newNode(ctx context.Context, privKeyBytes []byte, port int) (*Libp2pNode, e
 				// Add to DHT routing table so Bootstrap can use them
 				added, err := kdht.RoutingTable().TryAddPeer(pi.ID, true, true)
 				log.Printf("TryAddPeer: added=%v, err=%v, rt_size=%d", added, err, kdht.RoutingTable().Size())
-				// Probe for custom protocol support and announce addresses
-				go func(pid peer.ID) {
-					annCtx, annCancel := context.WithTimeout(ctx, 10*time.Second)
-					defer annCancel()
-					s, err := routedHost.NewStream(annCtx, pid, protocol.ID("/neo/px/1.0.0"))
-					if err != nil {
-						log.Printf("px: open stream to %s: %v (public DHT peer)", pid, err)
-						return
-					}
-					// This bootstrap supports our custom protocols
-					node.customBootMu.Lock()
-					node.customBootIDs = append(node.customBootIDs, pid)
-					node.customBootMu.Unlock()
-					defer s.Close()
-					var addrs []string
-					for _, a := range basicHost.Addrs() {
-						addrs = append(addrs, a.String())
-					}
-					// Add relay address for peers to reach us through this bootstrap
-					relayIP := getBootstrapRelayIP()
-					relayAddr := fmt.Sprintf("/ip4/%s/tcp/4001/p2p-circuit/p2p/%s", relayIP, basicHost.ID().String())
-					addrs = append(addrs, relayAddr)
-					ann := map[string]interface{}{
-						"peer_id": basicHost.ID().String(),
-						"addrs":   addrs,
-					}
-					if err := json.NewEncoder(s).Encode(ann); err != nil {
-						log.Printf("px: encode: %v", err)
-						return
-					}
-					log.Printf("px: announced %d addrs to custom bootstrap %s (including relay)", len(addrs), pid)
-				}(pi.ID)
+				// If this bootstrap is another Neo node, promote it to a full
+				// gossip peer so posts sync directly over the connection.
+				go node.promoteBootstrapToPeer(pi.ID)
 			}
 		}
 		bootCancel()
@@ -741,11 +761,6 @@ func newNode(ctx context.Context, privKeyBytes []byte, port int) (*Libp2pNode, e
 					if sz != prevSize || inRT != prevBoot {
 						log.Printf("RT MONITOR: size=%d (was %d), boot_in_rt=%v (was %v), conns=%d", sz, prevSize, inRT, prevBoot, conns)
 						prevSize, prevBoot = sz, inRT
-						if !inRT {
-							buf := make([]byte, 64*1024)
-							n := runtime.Stack(buf, true)
-							log.Printf("RT MONITOR: stack after removal:\n%s", buf[:n])
-						}
 					}
 				}
 			}
@@ -986,6 +1001,73 @@ func (n *Libp2pNode) keepaliveLoop() {
 	}
 }
 
+// promoteBootstrapToPeer turns a connected bootstrap peer that speaks the Neo
+// protocols (i.e. another phone, not a public IPFS DHT server) into a
+// first-class gossip peer: it probes /neo/px, announces our addresses, then
+// opens a /neo/gossip stream and emits peer_connected. Without this a
+// QR-connected phone stays invisible to broadcastPost (connectedPeers stays
+// empty and "0 peers connected" is shown), so posts only had the slow,
+// unreliable DHT-discovery path to sync over.
+func (n *Libp2pNode) promoteBootstrapToPeer(pid peer.ID) {
+	if pid == n.host.ID() {
+		return
+	}
+	// Already promoted?
+	n.lock.RLock()
+	_, hasStream := n.activeStreams[pid.String()]
+	n.lock.RUnlock()
+	if hasStream {
+		return
+	}
+
+	// Probe /neo/px — only Neo nodes speak it; public IPFS peers will error out.
+	pxCtx, pxCancel := context.WithTimeout(n.ctx, 10*time.Second)
+	pxStream, err := n.host.NewStream(pxCtx, pid, protocol.ID("/neo/px/1.0.0"))
+	pxCancel()
+	if err != nil {
+		log.Printf("promote: %s is not a Neo node (px: %v)", pid, err)
+		return
+	}
+	n.customBootMu.Lock()
+	known := false
+	for _, id := range n.customBootIDs {
+		if id == pid {
+			known = true
+			break
+		}
+	}
+	if !known {
+		n.customBootIDs = append(n.customBootIDs, pid)
+	}
+	n.customBootMu.Unlock()
+
+	var addrs []string
+	for _, a := range n.host.Addrs() {
+		addrs = append(addrs, a.String())
+	}
+	relayAddr := fmt.Sprintf("/ip4/%s/tcp/4001/p2p-circuit/p2p/%s", getBootstrapRelayIP(), n.host.ID().String())
+	addrs = append(addrs, relayAddr)
+	_ = json.NewEncoder(pxStream).Encode(map[string]interface{}{
+		"peer_id": n.host.ID().String(),
+		"addrs":   addrs,
+	})
+	pxStream.Close()
+
+	// Open the gossip stream — this is what makes it a real Neo peer.
+	gCtx, gCancel := context.WithTimeout(n.ctx, 8*time.Second)
+	gs, gErr := n.host.NewStream(gCtx, pid, protocol.ID(NeoProtocolID))
+	gCancel()
+	if gErr != nil {
+		log.Printf("promote: open gossip stream to %s: %v", pid, gErr)
+		return
+	}
+	log.Printf("promote: %s promoted to Neo gossip peer", pid)
+	// Service the outbound stream exactly like an inbound one: this emits
+	// peer_connected, keeps it in activeStreams, and reads inbound lines so
+	// sendMessage can write to it. Blocks until the stream closes.
+	n.serviceStream(gs)
+}
+
 // bootstrapSupervisor monitors bootstrap connections and reconnects with exp backoff
 func (n *Libp2pNode) bootstrapSupervisor() {
 	backoff := time.Second
@@ -1014,11 +1096,14 @@ func (n *Libp2pNode) bootstrapSupervisor() {
 				if err != nil {
 					log.Printf("bootstrap supervisor: connect %s: %v", pi.ID, err)
 					allConnected = false
-				} else {
-					log.Printf("bootstrap supervisor: reconnected to %s", pi.ID)
-					n.sendEvent(Event{Event: "bootstrap_reconnected", PeerID: pi.ID.String()})
+					continue
 				}
+				log.Printf("bootstrap supervisor: reconnected to %s", pi.ID)
+				n.sendEvent(Event{Event: "bootstrap_reconnected", PeerID: pi.ID.String()})
 			}
+			// Whether freshly connected or already connected, make sure a Neo
+			// bootstrap (another phone, e.g. a scanned QR) becomes a gossip peer.
+			go n.promoteBootstrapToPeer(pi.ID)
 		}
 
 		if allConnected {
@@ -1270,6 +1355,30 @@ func handleConnection(conn net.Conn) {
 			}
 			sendEvent(Event{Event: "peer_id", PeerID: node.host.ID().String()})
 
+		case "connect_info":
+			// Return this node's shareable identity for the "Connect to me" QR:
+			// peer ID, dialable (non-loopback) multiaddrs, and current reachability.
+			if node == nil {
+				sendEvent(Event{Event: "error", Error: "not initialized"})
+				continue
+			}
+			shareable := make([]string, 0)
+			for _, a := range node.listenAddresses() {
+				if strings.Contains(a, "/ip4/127.0.0.1") || strings.Contains(a, "/ip6/::1") {
+					continue
+				}
+				shareable = append(shareable, a)
+			}
+			node.lock.RLock()
+			status := reachabilityString(node.reachability)
+			node.lock.RUnlock()
+			sendEvent(Event{
+				Event:  "connect_info",
+				PeerID: node.host.ID().String(),
+				Addrs:  strings.Join(shareable, ","),
+				Status: status,
+			})
+
 		case "stop":
 			if node != nil {
 				node.stop()
@@ -1282,14 +1391,33 @@ func handleConnection(conn net.Conn) {
 
 		case "set_bootstrap":
 			// Override the bootstrap peer list. An empty multiaddr reverts
-			// to the built-in defaults. The next bootstrap supervisor tick
-			// picks up the change.
+			// to the built-in defaults.
 			if cmd.Multiaddr == "" {
 				bootstrapPeers = loadBootstrapPeers()
 				log.Printf("bootstrap: override cleared, restored to %d default(s)", len(bootstrapPeers))
 			} else {
 				bootstrapPeers = []string{cmd.Multiaddr}
 				log.Printf("bootstrap: override applied, 1 peer")
+				// Connect + promote immediately rather than waiting for the next
+				// supervisor tick (which may skip an already-connected peer that
+				// has no gossip stream yet). This makes a scanned/linked peer
+				// sync right away.
+				if node != nil {
+					if addr, err := ma.NewMultiaddr(cmd.Multiaddr); err == nil {
+						if pi, err := peer.AddrInfoFromP2pAddr(addr); err == nil {
+							go func(pi peer.AddrInfo) {
+								cctx, cancel := context.WithTimeout(node.ctx, 15*time.Second)
+								defer cancel()
+								node.host.Peerstore().AddAddrs(pi.ID, pi.Addrs, peerstore.PermanentAddrTTL)
+								if err := node.host.Connect(cctx, pi); err != nil {
+									log.Printf("set_bootstrap: connect %s: %v", pi.ID, err)
+									return
+								}
+								node.promoteBootstrapToPeer(pi.ID)
+							}(*pi)
+						}
+					}
+				}
 			}
 
 		case "publish":

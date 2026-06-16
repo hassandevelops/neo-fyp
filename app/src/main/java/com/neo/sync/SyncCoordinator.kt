@@ -61,12 +61,18 @@ class SyncCoordinator @Inject constructor(
 
             Log.d(TAG, "Event ${event.eventId} signature VERIFIED OK")
 
-            // 2. PERSISTENCE: Insert into append-only log (OnConflictStrategy.IGNORE handles duplicates)
-            val insertedRowId = eventLogDao.insertEvent(event)
-            Log.d(TAG, "Event ${event.eventId} inserted into event_log (rowId=$insertedRowId)")
-            
-            // 3. MATERIALIZATION: Update the fast-read Post table
-            applyEventToMaterializedView(event)
+            // A single malformed event (bad JSON payload, unexpected type) must not
+            // abort processing of the rest of the batch — isolate failures per event.
+            try {
+                // 2. PERSISTENCE: Insert into append-only log (OnConflictStrategy.IGNORE handles duplicates)
+                val insertedRowId = eventLogDao.insertEvent(event)
+                Log.d(TAG, "Event ${event.eventId} inserted into event_log (rowId=$insertedRowId)")
+
+                // 3. MATERIALIZATION: Update the fast-read Post table
+                applyEventToMaterializedView(event)
+            } catch (e: Exception) {
+                Log.e(TAG, "Skipping event ${event.eventId}: failed to apply (${e.message})", e)
+            }
         }
     }
 

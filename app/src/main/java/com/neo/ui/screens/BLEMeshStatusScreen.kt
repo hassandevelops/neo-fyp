@@ -51,6 +51,8 @@ fun BLEMeshStatusScreen(
     dhtPeerCount: Int = 0,
     bootstrapConnected: Boolean = false,
     lastError: String? = null,
+    reachability: String = "unknown",
+    onShowConnectQr: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -249,6 +251,16 @@ fun BLEMeshStatusScreen(
                             value = dhtPeerCount.toString(),
                             color = TextWhite
                         )
+                        val (reachLabel, reachColor) = when (reachability) {
+                            "public" -> "Public — can relay for peers" to NeoLime
+                            "private" -> "Private — behind NAT" to TextWhite60
+                            else -> "Checking…" to TextWhite60
+                        }
+                        WanStatusRow(
+                            label = "Reachability",
+                            value = reachLabel,
+                            color = reachColor
+                        )
                         lastError?.let { err ->
                             WanStatusRow(
                                 label = "Last error",
@@ -257,6 +269,19 @@ fun BLEMeshStatusScreen(
                             )
                         }
                     }
+                }
+
+                OutlinedButton(
+                    onClick = onShowConnectQr,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.QrCode2,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Connect a device (show my QR)")
                 }
             }
 

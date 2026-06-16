@@ -65,6 +65,14 @@ class GoLibP2pNode(
     private val _lastError = MutableStateFlow<String?>(null)
     val lastError: StateFlow<String?> = _lastError.asStateFlow()
 
+    /** AutoNAT reachability verdict from the Go node: "unknown" | "public" | "private". */
+    private val _reachability = MutableStateFlow("unknown")
+    val reachability: StateFlow<String> = _reachability.asStateFlow()
+
+    /** This node's shareable identity for the "Connect to me" QR. */
+    private val _connectInfo = MutableStateFlow<ConnectInfo?>(null)
+    val connectInfo: StateFlow<ConnectInfo?> = _connectInfo.asStateFlow()
+
     // Saved peers for backward compatibility
     private val savedPeers = mutableListOf<String>()
 
@@ -278,11 +286,15 @@ class GoLibP2pNode(
                 }
                 "peer_connected" -> {
                     val pid = obj.optString("peerID")
-                    _connectedPeers.value = _connectedPeers.value + pid
+                    if (pid.isNotEmpty() && !_connectedPeers.value.contains(pid)) {
+                        _connectedPeers.value = _connectedPeers.value + pid
+                    }
+                    Log.i(TAG, "peer_connected: $pid (total=${_connectedPeers.value.size})")
                 }
                 "peer_disconnected" -> {
                     val pid = obj.optString("peerID")
                     _connectedPeers.value = _connectedPeers.value.filter { it != pid }
+                    Log.i(TAG, "peer_disconnected: $pid (total=${_connectedPeers.value.size})")
                 }
                 "error" -> {
                     val err = obj.optString("error")
@@ -293,9 +305,25 @@ class GoLibP2pNode(
                     val count = obj.optInt("count")
                     Log.d(TAG, "DHT peers: $count")
                     _dhtPeerCount.value = count
+                    // Reaching the DHT is our signal that the WAN bootstrap path is live.
+                    if (count > 0) _bootstrapConnected.value = true
                 }
-                "ready" -> {
-                    _bootstrapConnected.value = true
+                "reachability" -> {
+                    val status = obj.optString("status", "unknown")
+                    Log.i(TAG, "Reachability: $status")
+                    _reachability.value = status
+                }
+                "connect_info" -> {
+                    val peerId = obj.optString("peerID")
+                    val addrs = obj.optString("addrs")
+                        .split(",")
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                    val status = obj.optString("status", _reachability.value)
+                    if (status.isNotEmpty()) _reachability.value = status
+                    if (peerId.isNotEmpty()) {
+                        _connectInfo.value = ConnectInfo(peerId, addrs)
+                    }
                 }
                 "peers" -> { }
                 "pong" -> { }
@@ -315,6 +343,7 @@ class GoLibP2pNode(
                 try {
                     sendCommand(JSONObject().apply { put("cmd", "peers") })
                     sendCommand(JSONObject().apply { put("cmd", "dht_count") })
+                    sendCommand(JSONObject().apply { put("cmd", "connect_info") })
                 } catch (_: Exception) { }
                 delay(15_000L)
             }
@@ -421,6 +450,36 @@ class GoLibP2pNode(
         return prefs.getStringSet("saved_peers", emptySet())?.toList() ?: emptyList()
     }
 
+    /**
+     * Push a bootstrap multiaddr to the running Go node immediately (live), so the
+     * bootstrap supervisor connects to it and promotes it to a Neo peer without
+     * waiting for a process restart. Also dials it directly for a fast first hop.
+     */
+    fun setBootstrap(multiaddr: String) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                sendCommand(JSONObject().apply {
+                    put("cmd", "set_bootstrap")
+                    put("multiaddr", multiaddr)
+                })
+            } catch (e: Exception) {
+                Log.w(TAG, "setBootstrap failed", e)
+            }
+        }
+        addPeerByMultiaddr(multiaddr)
+    }
+
+    /** Ask the Go node to (re)emit this device's [ConnectInfo] for the QR screen. */
+    fun requestConnectInfo() {
+        scope.launch(Dispatchers.IO) {
+            try {
+                sendCommand(JSONObject().apply { put("cmd", "connect_info") })
+            } catch (e: Exception) {
+                Log.w(TAG, "requestConnectInfo failed", e)
+            }
+        }
+    }
+
     suspend fun publishToTopic(message: Message): Boolean =
         publishToGossipSub(message)
 
@@ -442,4 +501,18 @@ class GoLibP2pNode(
             false
         }
     }
+}
+
+/**
+ * This device's shareable libp2p identity, used to render the "Connect to me" QR.
+ *
+ * @param peerId      the libp2p peer ID
+ * @param multiaddrs  dialable (non-loopback) multiaddrs, best candidate first
+ */
+data class ConnectInfo(
+    val peerId: String,
+    val multiaddrs: List<String>
+) {
+    /** The single best multiaddr to advertise (already suffixed with /p2p/<id>). */
+    val primaryMultiaddr: String? get() = multiaddrs.firstOrNull()
 }

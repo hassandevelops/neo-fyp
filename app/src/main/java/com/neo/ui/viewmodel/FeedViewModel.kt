@@ -1,8 +1,6 @@
 package com.neo.ui.viewmodel
 
 import android.app.Application
-import android.net.wifi.p2p.WifiP2pDevice
-import android.net.wifi.p2p.WifiP2pInfo
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.PagingData
@@ -74,11 +72,23 @@ class FeedViewModel @Inject constructor(
             _postCreationState.value = CreatePostViewModel.UiState.Creating("Creating post…")
             onComplete() // Dismiss immediately
 
-            val result = createPostUseCase(content, authorName, imageUri, locationName)
+            // The post is persisted locally by the use case before it broadcasts,
+            // so it appears in the feed immediately regardless of network state.
+            // Cap the whole call so a slow/stuck transport can never wedge the
+            // "Publishing…" indicator — the post still syncs in the background.
+            val result = try {
+                kotlinx.coroutines.withTimeout(8000) {
+                    createPostUseCase(content, authorName, imageUri, locationName)
+                }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                // Treat a slow broadcast as success: the post is saved and will
+                // propagate when a peer is reachable.
+                Result.success(Unit)
+            }
+
             if (result.isSuccess) {
                 _postCreationState.value = CreatePostViewModel.UiState.Broadcasting("Broadcasting to mesh…")
-                // Wait for broadcast to propagate, then show success
-                kotlinx.coroutines.delay(2000)
+                kotlinx.coroutines.delay(1500)
                 _postCreationState.value = CreatePostViewModel.UiState.Success("Post shared with mesh")
             } else {
                 val errorMsg = result.exceptionOrNull()?.message ?: "Failed to create post"

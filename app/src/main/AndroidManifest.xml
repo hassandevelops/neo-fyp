@@ -72,9 +72,14 @@
                 <data
                     android:scheme="neo"
                     android:host="posts" />
+                <!-- neo://bootstrap?maddr=… — join a peer/bootstrap via shared link.
+                     Applied live by MainActivity.maybeHandleBootstrapLink(). -->
+                <data
+                    android:scheme="neo"
+                    android:host="bootstrap" />
             </intent-filter>
         </activity>
-        
+
         <!-- Bluetooth Foreground Service -->
         <service
             android:name=".bluetooth.BluetoothService"
@@ -89,19 +94,15 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-        <!-- QR scan activity for capturing bootstrap multiaddrs -->
+        <!-- QR scan activity for capturing bootstrap multiaddrs.
+             Launched explicitly from in-app UI (Settings / Connect screen).
+             The neo://bootstrap deep link is handled by MainActivity, which
+             applies the multiaddr to the running node live. -->
         <activity
             android:name=".ui.screens.settings.QrScanActivity"
             android:enabled="true"
-            android:exported="true"
-            android:theme="@style/Theme.App.Starting">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="neo" android:host="bootstrap" />
-            </intent-filter>
-        </activity>
+            android:exported="false"
+            android:theme="@style/Theme.App.Starting" />
         
         <!-- FileProvider for sharing images -->
         <provider

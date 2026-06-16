@@ -1,5 +1,7 @@
 package com.neo.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -63,10 +65,10 @@ fun EnhancedFeedScreen(
     modifier: Modifier = Modifier
 ) {
     val pagedPosts = viewModel.pagedPosts.collectAsLazyPagingItems()
-    val connectedPeersCount by viewModel.connectedPeersCount.collectAsState()
-    val notificationCount by viewModel.notificationCount.collectAsState()
-    val isRefreshing by viewModel.isRefreshing.collectAsState()
-    val postCreationState by viewModel.postCreationState.collectAsState()
+    val connectedPeersCount by viewModel.connectedPeersCount.collectAsStateWithLifecycle()
+    val notificationCount by viewModel.notificationCount.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
+    val postCreationState by viewModel.postCreationState.collectAsStateWithLifecycle()
     val postIds by remember {
         derivedStateOf {
             pagedPosts.itemSnapshotList.items.map { it.id }
@@ -74,9 +76,9 @@ fun EnhancedFeedScreen(
     }
     val postStatsMap by remember(postIds) {
         postDetailViewModel.getPostStatsMapFlow(postIds)
-    }.collectAsState(initial = emptyMap())
-    val savedPostIds by viewModel.savedPostIds.collectAsState()
-    val profilesByDid by viewModel.profilesByDid.collectAsState()
+    }.collectAsStateWithLifecycle(initialValue = emptyMap())
+    val savedPostIds by viewModel.savedPostIds.collectAsStateWithLifecycle()
+    val profilesByDid by viewModel.profilesByDid.collectAsStateWithLifecycle()
     var selectedPostForComments by remember { mutableStateOf<Post?>(null) }
     var viewerImages by remember { mutableStateOf<List<File>>(emptyList()) }
     val context = LocalContext.current
@@ -354,7 +356,7 @@ fun EnhancedFeedScreen(
     selectedPostForComments?.let { post ->
         val threads by postDetailViewModel
             .getCommentThreadsForPost(post.id)
-            .collectAsState(initial = emptyList())
+            .collectAsStateWithLifecycle(initialValue = emptyList())
 
         CommentsBottomSheet(
             postId = post.id,

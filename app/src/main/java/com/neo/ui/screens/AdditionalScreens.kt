@@ -1,5 +1,7 @@
 package com.neo.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -233,8 +235,8 @@ fun NotificationsScreen(
     onNotificationClick: (Notification) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val notifications by viewModel.notifications.collectAsState()
-    val profilesByDid by viewModel.profilesByDid.collectAsState()
+    val notifications by viewModel.notifications.collectAsStateWithLifecycle()
+    val profilesByDid by viewModel.profilesByDid.collectAsStateWithLifecycle()
 
     GradientBackground(modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize()) {

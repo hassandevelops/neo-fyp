@@ -42,6 +42,16 @@ class LibP2pService : Service(), TransportPort {
     override val connectedPeers: StateFlow<List<String>> get() = libP2pNode.connectedPeers
     override val allIncomingMessages: Flow<Pair<String, Message>> get() = libP2pNode.incomingMessages
 
+    // Live WAN status for the UI (BLE/WAN status screen + Connect-to-me screen)
+    val dhtPeerCount: StateFlow<Int> get() = libP2pNode.dhtPeerCount
+    val bootstrapConnected: StateFlow<Boolean> get() = libP2pNode.bootstrapConnected
+    val lastError: StateFlow<String?> get() = libP2pNode.lastError
+    val reachability: StateFlow<String> get() = libP2pNode.reachability
+    val connectInfo: StateFlow<ConnectInfo?> get() = libP2pNode.connectInfo
+
+    fun requestConnectInfo() = libP2pNode.requestConnectInfo()
+    fun setBootstrap(multiaddr: String) = libP2pNode.setBootstrap(multiaddr)
+
     inner class LocalBinder : Binder() {
         fun getService(): LibP2pService = this@LibP2pService
     }

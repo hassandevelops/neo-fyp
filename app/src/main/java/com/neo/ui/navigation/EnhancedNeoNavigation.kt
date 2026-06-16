@@ -1,5 +1,7 @@
 package com.neo.ui.navigation
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -51,6 +53,7 @@ fun EnhancedNeoNavigation(
     viewModel: FeedViewModel,
     userPreferences: UserPreferences,
     deepLinkIntent: Intent? = null,
+    libP2pService: com.neo.libp2p.LibP2pService? = null,
     modifier: Modifier = Modifier
 ) {
     val TAG = "EnhancedNeoNavigation"
@@ -74,13 +77,13 @@ fun EnhancedNeoNavigation(
     val currentRoute = navBackStackEntry?.destination?.route ?: startDestination
 
     // Collect state from ViewModel
-    val connectedPeersCount by viewModel.connectedPeersCount.collectAsState()
-    val connectedPeers by viewModel.connectedPeers.collectAsState()
-    val currentImageUri by viewModel.profileImageUri.collectAsState()
+    val connectedPeersCount by viewModel.connectedPeersCount.collectAsStateWithLifecycle()
+    val connectedPeers by viewModel.connectedPeers.collectAsStateWithLifecycle()
+    val currentImageUri by viewModel.profileImageUri.collectAsStateWithLifecycle()
 
     // ── Transient in-app notification banner ───────────────────────────────────
-    val latestNotification by viewModel.latestNotification.collectAsState()
-    val bannerProfiles by viewModel.profilesByDid.collectAsState()
+    val latestNotification by viewModel.latestNotification.collectAsStateWithLifecycle()
+    val bannerProfiles by viewModel.profilesByDid.collectAsStateWithLifecycle()
     var bannerNotification by remember { mutableStateOf<com.neo.data.model.Notification?>(null) }
     var lastSeenNotifId by remember { mutableStateOf<String?>(null) }
     var bannerInitialized by remember { mutableStateOf(false) }
@@ -103,7 +106,7 @@ fun EnhancedNeoNavigation(
         }
     }
 
-    val postCreationState by viewModel.postCreationState.collectAsState()
+    val postCreationState by viewModel.postCreationState.collectAsStateWithLifecycle()
     LaunchedEffect(postCreationState) {
         when (val state = postCreationState) {
             is CreatePostViewModel.UiState.Success -> {
@@ -276,9 +279,9 @@ fun EnhancedNeoNavigation(
                 popExitTransition = { fadeOut(animationSpec = tween(0)) }
             ) {
             val profileViewModel: ProfileViewModel = hiltViewModel()
-            val currentName by profileViewModel.profileName.collectAsState()
-            val currentBio by profileViewModel.profileBio.collectAsState()
-            val currentProfilePhoto by profileViewModel.profileImageUri.collectAsState()
+            val currentName by profileViewModel.profileName.collectAsStateWithLifecycle()
+            val currentBio by profileViewModel.profileBio.collectAsStateWithLifecycle()
+            val currentProfilePhoto by profileViewModel.profileImageUri.collectAsStateWithLifecycle()
 
             EditProfileScreen(
                 currentName = currentName,
@@ -300,8 +303,8 @@ fun EnhancedNeoNavigation(
                 popEnterTransition = { fadeIn(animationSpec = tween(0)) },
                 popExitTransition = { fadeOut(animationSpec = tween(0)) }
             ) {
-            val searchPosts by viewModel.getAllPosts().collectAsState(initial = emptyList())
-            val searchProfiles by viewModel.profilesByDid.collectAsState()
+            val searchPosts by viewModel.getAllPosts().collectAsStateWithLifecycle(initialValue = emptyList())
+            val searchProfiles by viewModel.profilesByDid.collectAsStateWithLifecycle()
             SearchScreen(
                 posts = searchPosts,
                 onPostClick = { post ->
@@ -420,9 +423,46 @@ fun EnhancedNeoNavigation(
                 popEnterTransition = { fadeIn(animationSpec = tween(0)) },
                 popExitTransition = { fadeOut(animationSpec = tween(0)) }
             ) {
+            // Live WAN status from the bound libp2p service (null until bound).
+            // Fallback flows are remembered unconditionally (Rules of Compose);
+            // collectAsStateWithLifecycle re-keys when the service binds.
+            val fbDht = remember { kotlinx.coroutines.flow.MutableStateFlow(0) }
+            val fbBootstrap = remember { kotlinx.coroutines.flow.MutableStateFlow(false) }
+            val fbError = remember { kotlinx.coroutines.flow.MutableStateFlow<String?>(null) }
+            val fbReach = remember { kotlinx.coroutines.flow.MutableStateFlow("unknown") }
+            val wanDhtCount by (libP2pService?.dhtPeerCount ?: fbDht).collectAsStateWithLifecycle()
+            val wanBootstrap by (libP2pService?.bootstrapConnected ?: fbBootstrap).collectAsStateWithLifecycle()
+            val wanError by (libP2pService?.lastError ?: fbError).collectAsStateWithLifecycle()
+            val wanReachability by (libP2pService?.reachability ?: fbReach).collectAsStateWithLifecycle()
             BLEMeshStatusScreen(
                 connectedPeers = connectedPeers.ifEmpty { List(connectedPeersCount) { "Peer $it" } },
+                dhtPeerCount = wanDhtCount,
+                bootstrapConnected = wanBootstrap,
+                lastError = wanError,
+                reachability = wanReachability,
                 onForceSync = { viewModel.forceSyncNow() },
+                onShowConnectQr = { navController.navigate("connect_me") },
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // Connect to me — show this device's QR so a peer can scan & connect
+        composable(
+            "connect_me",
+            enterTransition = { fadeIn(animationSpec = tween(0)) },
+            exitTransition = { fadeOut(animationSpec = tween(0)) },
+            popEnterTransition = { fadeIn(animationSpec = tween(0)) },
+            popExitTransition = { fadeOut(animationSpec = tween(0)) }
+        ) {
+            val fbConnect = remember { kotlinx.coroutines.flow.MutableStateFlow<com.neo.libp2p.ConnectInfo?>(null) }
+            val fbReach2 = remember { kotlinx.coroutines.flow.MutableStateFlow("unknown") }
+            val connectInfo by (libP2pService?.connectInfo ?: fbConnect).collectAsStateWithLifecycle()
+            val reachability by (libP2pService?.reachability ?: fbReach2).collectAsStateWithLifecycle()
+            LaunchedEffect(libP2pService) { libP2pService?.requestConnectInfo() }
+            ConnectMeScreen(
+                connectInfo = connectInfo,
+                reachability = reachability,
+                onRefresh = { libP2pService?.requestConnectInfo() },
                 onBack = { navController.popBackStack() }
             )
         }
@@ -438,7 +478,7 @@ fun EnhancedNeoNavigation(
             popExitTransition = { fadeOut(animationSpec = tween(0)) }
         ) {
             val postDetailViewModel: com.neo.ui.viewmodel.PostDetailViewModel = hiltViewModel()
-            val post by postDetailViewModel.post.collectAsState()
+            val post by postDetailViewModel.post.collectAsStateWithLifecycle()
             
             when {
                 post != null -> PostDetailScreen(

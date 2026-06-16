@@ -1,5 +1,7 @@
 package com.neo.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
 import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.Image
@@ -51,13 +53,13 @@ fun PostDetailScreen(
     val scope = rememberCoroutineScope()
     var commentText by remember { mutableStateOf("") }
     var showCommentsSheet by remember { mutableStateOf(false) }
-    val hasLiked by viewModel.hasUserLikedPostFlow(post.id).collectAsState(initial = false)
-    val isSaved by viewModel.observeIsSaved(post.id).collectAsState(initial = false)
+    val hasLiked by viewModel.hasUserLikedPostFlow(post.id).collectAsStateWithLifecycle(initialValue = false)
+    val isSaved by viewModel.observeIsSaved(post.id).collectAsStateWithLifecycle(initialValue = false)
     val commentThreads by viewModel
         .getCommentThreadsForPost(post.id)
-        .collectAsState(initial = emptyList())
-    val uiState by viewModel.uiState.collectAsState()
-    val profilesByDid by viewModel.profilesByDid.collectAsState()
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val profilesByDid by viewModel.profilesByDid.collectAsStateWithLifecycle()
 
     // Resolve a comment author's avatar (deviceId-authored → only self resolves;
     // others fall back to the default avatar until keyed identities are unified).

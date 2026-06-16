@@ -83,17 +83,29 @@ class MainActivity : ComponentActivity() {
 
     private var libP2pService: com.neo.libp2p.LibP2pService? = null
     private var isLibP2pBound = false
+    // Compose-observable mirror of the bound libp2p service, so screens can read
+    // live WAN status (reachability, DHT count) and the Connect-to-me identity.
+    private var libP2pServiceState by mutableStateOf<com.neo.libp2p.LibP2pService?>(null)
 
     private val libP2pServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             val binder = service as com.neo.libp2p.LibP2pService.LocalBinder
             libP2pService = binder.getService()
+            libP2pServiceState = binder.getService()
             isLibP2pBound = true
             syncManager.setLibP2pService(binder.getService())
+            // If a bootstrap deep link arrived before the service was bound,
+            // push it to the node now so it takes effect without a restart.
+            if (userPreferences.bootstrapEnabled) {
+                userPreferences.bootstrapMultiaddr
+                    ?.takeIf { it.startsWith("/") && it.contains("/p2p/") }
+                    ?.let { binder.getService().setBootstrap(it) }
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
             libP2pService = null
+            libP2pServiceState = null
             isLibP2pBound = false
         }
     }
@@ -173,7 +185,8 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
         deepLinkIntent.value = intent
-        
+        maybeHandleBootstrapLink(intent)
+
         // Handle the splash screen transition.
         var keepSplashOnScreen = true
         val delay = 1500L
@@ -215,7 +228,8 @@ class MainActivity : ComponentActivity() {
                     EnhancedNeoNavigation(
                         viewModel = viewModel,
                         userPreferences = userPreferences,
-                        deepLinkIntent = deepLinkIntent.value
+                        deepLinkIntent = deepLinkIntent.value,
+                        libP2pService = libP2pServiceState
                     )
                 }
             }
@@ -227,7 +241,26 @@ class MainActivity : ComponentActivity() {
     
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        maybeHandleBootstrapLink(intent)
         deepLinkIntent.value = intent
+    }
+
+    /**
+     * Handle a `neo://bootstrap?maddr=<multiaddr>` deep link (the same payload the
+     * QR encodes). Lets a device join a peer/bootstrap via a shared link, and is
+     * applied live to the running libp2p node.
+     */
+    private fun maybeHandleBootstrapLink(intent: Intent?) {
+        val uri = intent?.data ?: return
+        if (intent.action != Intent.ACTION_VIEW) return
+        if (uri.scheme != "neo" || uri.host != "bootstrap") return
+        val maddr = uri.getQueryParameter("maddr")?.takeIf {
+            it.startsWith("/") && it.contains("/p2p/")
+        } ?: return
+        userPreferences.bootstrapMultiaddr = maddr
+        userPreferences.bootstrapEnabled = true
+        libP2pService?.setBootstrap(maddr)
+        Log.i(TAG, "Applied bootstrap from deep link: $maddr")
     }
 
     override fun onDestroy() {

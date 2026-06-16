@@ -1,5 +1,7 @@
 package com.neo.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -53,18 +55,18 @@ fun ProfileScreen(
     isCurrentUser: Boolean = true,
     modifier: Modifier = Modifier
 ) {
-    val profileName by viewModel.profileName.collectAsState()
-    val profileBio by viewModel.profileBio.collectAsState()
-    val profileImageUri by viewModel.profileImageUri.collectAsState()
-    val handle by viewModel.handle.collectAsState()
-    val postCount by viewModel.postCount.collectAsState()
-    val nodeCount by viewModel.connectedPeersCount.collectAsState()
-    val followerCount by viewModel.followerCount.collectAsState()
-    val isFollowing by viewModel.isFollowing.collectAsState()
-    val isFollowLoading by viewModel.isFollowLoading.collectAsState()
-    val userPosts by viewModel.userPosts.collectAsState()
-    val savedPosts by viewModel.savedPosts.collectAsState()
-    val savedPostIds by viewModel.savedPostIds.collectAsState()
+    val profileName by viewModel.profileName.collectAsStateWithLifecycle()
+    val profileBio by viewModel.profileBio.collectAsStateWithLifecycle()
+    val profileImageUri by viewModel.profileImageUri.collectAsStateWithLifecycle()
+    val handle by viewModel.handle.collectAsStateWithLifecycle()
+    val postCount by viewModel.postCount.collectAsStateWithLifecycle()
+    val nodeCount by viewModel.connectedPeersCount.collectAsStateWithLifecycle()
+    val followerCount by viewModel.followerCount.collectAsStateWithLifecycle()
+    val isFollowing by viewModel.isFollowing.collectAsStateWithLifecycle()
+    val isFollowLoading by viewModel.isFollowLoading.collectAsStateWithLifecycle()
+    val userPosts by viewModel.userPosts.collectAsStateWithLifecycle()
+    val savedPosts by viewModel.savedPosts.collectAsStateWithLifecycle()
+    val savedPostIds by viewModel.savedPostIds.collectAsStateWithLifecycle()
     val currentUserName = viewModel.currentUserName
 
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -91,7 +93,7 @@ fun ProfileScreen(
     val contentPostIds = contentPosts.map { it.id }
     val statsMap by remember(contentPostIds) {
         postDetailViewModel.getPostStatsMapFlow(contentPostIds)
-    }.collectAsState(initial = emptyMap())
+    }.collectAsStateWithLifecycle(initialValue = emptyMap())
 
     GradientBackground(modifier = modifier) {
         LazyColumn(

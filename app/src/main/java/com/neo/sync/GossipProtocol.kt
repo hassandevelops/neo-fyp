@@ -1,7 +1,5 @@
 package com.neo.sync
 
-import android.net.wifi.p2p.WifiP2pDevice
-import android.net.wifi.p2p.WifiP2pInfo
 import android.util.Log
 import android.util.Base64
 import com.neo.bluetooth.BluetoothService
@@ -140,14 +138,14 @@ class GossipProtocol @Inject constructor(
         val internetPeers = libP2pService?.getConnectedPeerAddresses() ?: emptyList()
         val peerAddresses = (btPeers + internetPeers).distinct()
 
-        Log.e(TAG, "broadcastPost: post=${post.id} peers=${peerAddresses.size} bt=${btPeers.size} inet=${internetPeers.size} btSvc=${bluetoothService != null} libp2pSvc=${libP2pService != null}")
-        Log.e(TAG, "broadcastPost: btPeers=$btPeers inetPeers=$internetPeers")
+        Log.d(TAG, "broadcastPost: post=${post.id} peers=${peerAddresses.size} bt=${btPeers.size} inet=${internetPeers.size} btSvc=${bluetoothService != null} libp2pSvc=${libP2pService != null}")
+        Log.d(TAG, "broadcastPost: btPeers=$btPeers inetPeers=$internetPeers")
         if (peerAddresses.isEmpty()) {
-            Log.e(TAG, "broadcastPost: NO PEERS — post ${post.id} saved locally, will sync on next peer connect")
+            Log.i(TAG, "broadcastPost: NO PEERS — post ${post.id} saved locally, will sync on next peer connect")
         }
 
         val message = buildPostBroadcast(post)
-        Log.e(TAG, "broadcastPost: sending post ${post.id} to ${peerAddresses.size} peers")
+        Log.d(TAG, "broadcastPost: sending post ${post.id} to ${peerAddresses.size} peers")
         for (peerAddress in peerAddresses) {
             ackManager.sendWithAck(
                 messageId = post.id,
@@ -156,17 +154,17 @@ class GossipProtocol @Inject constructor(
                 sendFunction = { msg, addr ->
                     if (internetPeers.contains(addr)) {
                         val sent = libP2pService?.sendMessage(addr, msg) ?: false
-                        Log.e(TAG, "broadcastPost: send via libp2p to $addr result=$sent")
+                        Log.d(TAG, "broadcastPost: send via libp2p to $addr result=$sent")
                         sent
                     } else {
                         val svcAvail = bluetoothService != null
                         val sent = bluetoothService?.sendMessage(addr, msg) ?: false
-                        Log.e(TAG, "broadcastPost: send via BLE to $addr result=$sent svcAvail=$svcAvail")
+                        Log.d(TAG, "broadcastPost: send via BLE to $addr result=$sent svcAvail=$svcAvail")
                         sent
                     }
                 },
                 onSuccess = {
-                    Log.e(TAG, "broadcastPost: ACK received for ${post.id} from $peerAddress")
+                    Log.d(TAG, "broadcastPost: ACK received for ${post.id} from $peerAddress")
                     // Start the heavy image stream only AFTER the post is
                     // confirmed delivered to this peer — so the text lands first
                     // and the stream can't starve the post's own delivery.
@@ -174,10 +172,10 @@ class GossipProtocol @Inject constructor(
                         scope.launch { sendImageChunksToPeer(post, peerAddress) }
                     }
                 },
-                onFailure = { err -> Log.e(TAG, "broadcastPost: FAILED for ${post.id} to $peerAddress: $err") }
+                onFailure = { err -> Log.w(TAG, "broadcastPost: FAILED for ${post.id} to $peerAddress: $err") }
             )
         }
-        Log.e(TAG, "Broadcasted post ${post.id} to ${peerAddresses.size} peers")
+        Log.d(TAG, "Broadcasted post ${post.id} to ${peerAddresses.size} peers")
 
         // Also publish to GossipSub for WAN mesh distribution. The Go binary's
         // GossipSub layer handles fanout to all subscribed peers, including
@@ -655,7 +653,7 @@ class GossipProtocol @Inject constructor(
         // to overflow and all subsequent messages to be silently dropped.
         val imageData: String? = null
 
-        Log.e(TAG, "buildPostBroadcast: post=${post.id} imageHash=${post.imageHash} hasLocalFile=${post.imageHash != null && imageFileStore.load(post.imageHash) != null}")
+        Log.d(TAG, "buildPostBroadcast: post=${post.id} imageHash=${post.imageHash} hasLocalFile=${post.imageHash != null && imageFileStore.load(post.imageHash) != null}")
 
         return Message.PostBroadcast(
             id = post.id,
