@@ -258,15 +258,18 @@ func main() {
 		// streams once BOTH directions have finished. Read the src->target
 		// direction from `buffered` so any bytes pulled in with the header
 		// are not lost.
+		srcID := s.Conn().RemotePeer()
 		var wg sync.WaitGroup
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			io.Copy(targetStream, buffered)
+			nb, _ := io.Copy(targetStream, buffered)
+			log.Printf("proxy: %s->%s copied %d bytes (src->target)", srcID, target, nb)
 		}()
 		go func() {
 			defer wg.Done()
-			io.Copy(s, targetStream)
+			nb, _ := io.Copy(s, targetStream)
+			log.Printf("proxy: %s->%s copied %d bytes (target->src)", target, srcID, nb)
 		}()
 		wg.Wait()
 		s.Close()

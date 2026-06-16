@@ -1064,13 +1064,21 @@ func (n *Libp2pNode) discoveryLoop() {
 						log.Printf("discover: PX with %s failed: %v", pid, pxErr)
 					}
 					// Fall back to proxy through custom bootstrap.
-					// Tiebreaker: only the peer with the lexicographically smaller
-					// id initiates the proxy tunnel; the other waits to receive it.
-					// This prevents both peers opening a tunnel at once (which flap
-					// and leave connectedPeers momentarily empty, dropping posts).
+					// Soft tiebreaker: the lexicographically smaller id initiates
+					// immediately; the larger waits one discovery interval and only
+					// initiates if it STILL has no stream. This avoids both opening
+					// at once (flap) while ensuring that if the initiator's tunnel
+					// dies, the other side rebuilds it (fixes one-directional sync).
 					if n.host.ID().String() >= pid.String() {
-						log.Printf("proxy: deferring to %s to initiate tunnel", pid)
-						return
+						log.Printf("proxy: deferring to %s to initiate tunnel (will retry if absent)", pid)
+						time.Sleep(12 * time.Second)
+						n.lock.RLock()
+						_, have := n.activeStreams[pid.String()]
+						n.lock.RUnlock()
+						if have {
+							return
+						}
+						log.Printf("proxy: %s did not initiate, taking over", pid)
 					}
 					n.customBootMu.Lock()
 					proxyID := peer.ID("")
@@ -1117,11 +1125,29 @@ func (n *Libp2pNode) keepaliveLoop() {
 		case <-n.ctx.Done():
 			return
 		case <-ticker.C:
+			// Snapshot streams, then ping each. A write error means the stream
+			// (or the proxy tunnel behind it) is dead — remove it and emit
+			// peer_disconnected so the discovery loop re-dials. Without this a
+			// stale entry makes sendMessage "succeed" into a dead tunnel, so
+			// posts silently vanish (the cause of one-directional sync).
 			n.lock.RLock()
-			for _, s := range n.activeStreams {
-				s.Write([]byte("\n"))
+			snapshot := make(map[string]network.Stream, len(n.activeStreams))
+			for k, v := range n.activeStreams {
+				snapshot[k] = v
 			}
 			n.lock.RUnlock()
+			for pid, s := range snapshot {
+				if _, err := s.Write([]byte("\n")); err != nil {
+					log.Printf("keepalive: stream to %s dead (%v), removing", pid, err)
+					n.lock.Lock()
+					if n.activeStreams[pid] == s {
+						delete(n.activeStreams, pid)
+					}
+					n.lock.Unlock()
+					s.Reset()
+					n.sendEvent(Event{Event: "peer_disconnected", PeerID: pid})
+				}
+			}
 		}
 	}
 }
