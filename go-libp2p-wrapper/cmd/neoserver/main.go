@@ -416,12 +416,14 @@ func (n *Libp2pNode) serviceStreamFor(peerID string, s network.Stream) {
 	n.sendEvent(Event{Event: "peer_connected", PeerID: peerID})
 
 	reader := bufio.NewReader(s)
+	log.Printf("serviceStreamFor: %s reader loop START", peerID)
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err != io.EOF {
 				log.Printf("read error from %s: %v", peerID, err)
 			}
+			log.Printf("serviceStreamFor: %s reader loop END (%v)", peerID, err)
 			break
 		}
 		line = strings.TrimSuffix(line, "\n")
@@ -1100,8 +1102,9 @@ func (n *Libp2pNode) discoveryLoop() {
 					// and can emit peer_connected + reply over the same tunnel. The relay
 					// forwards this header verbatim to the destination.
 					req := map[string]string{"target": pid.String(), "src": n.host.ID().String()}
-					if err := json.NewEncoder(s).Encode(req); err != nil {
-						log.Printf("proxy: encode: %v", err)
+					hdr, _ := json.Marshal(req)
+					if _, err := s.Write(append(hdr, '\n')); err != nil {
+						log.Printf("proxy: write header: %v", err)
 						s.Close()
 						return
 					}
