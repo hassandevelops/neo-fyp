@@ -316,10 +316,13 @@ func main() {
 	// lanIP already computed above for relay addresses
 
 	// Pick the public-facing multiaddr to advertise in the QR code.
-	// Prefer the LAN address if we have one; otherwise use the first
-	// non-loopback host address.
+	// Priority: NEO_PUBLIC_ADDR (an internet-reachable base like a tunnel or
+	// public IP) so phones on OTHER networks can connect; then LAN IP for
+	// same-Wi-Fi; then a non-loopback host address.
 	var publicMultiaddr string
-	if lanIP != "" {
+	if publicRelayBase != "" {
+		publicMultiaddr = publicRelayBase + "/p2p/" + pid
+	} else if lanIP != "" {
 		publicMultiaddr = fmt.Sprintf("/ip4/%s/tcp/%d/p2p/%s", lanIP, port, pid)
 	} else {
 		for _, a := range host.Addrs() {
