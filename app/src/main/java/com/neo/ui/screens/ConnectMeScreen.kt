@@ -110,9 +110,12 @@ fun ConnectMeScreen(
 
         Spacer(Modifier.height(8.dp))
 
-        // Reachability badge
+        // Reachability badge — reflects whether this phone can actually host
+        // peers across networks (reachable + has a public/relay address).
         ReachabilityBadge(
             reachability = reachability,
+            canHost = connectInfo?.canHost == true,
+            hasWan = (connectInfo?.wanAddrs?.isNotEmpty() == true),
             modifier = Modifier.padding(horizontal = 20.dp)
         )
 
@@ -175,8 +178,10 @@ fun ConnectMeScreen(
 
         Spacer(Modifier.height(20.dp))
 
+        val scope = if (connectInfo?.canHost == true) "from any network, over the internet"
+                    else "on the same Wi-Fi"
         Text(
-            text = "Have a friend open Neo → Settings → Network → Scan Bootstrap QR and point their camera here.",
+            text = "Have a friend open Neo → Connect a device → Scan, and point their camera here. They can connect $scope.",
             color = TextWhite60,
             fontSize = 13.sp,
             modifier = Modifier.padding(horizontal = 24.dp)
@@ -227,16 +232,28 @@ fun ConnectMeScreen(
 }
 
 @Composable
-private fun ReachabilityBadge(reachability: String, modifier: Modifier = Modifier) {
-    val (title, detail, color) = when (reachability) {
-        "public" -> Triple(
-            "Publicly reachable",
-            "Other devices can connect to you over the internet, and you can relay for peers behind NAT.",
+private fun ReachabilityBadge(
+    reachability: String,
+    canHost: Boolean,
+    hasWan: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val (title, detail, color) = when {
+        // Truly hostable: reachable from the internet AND we have a public/relay
+        // address to hand out. The QR below carries that cross-network address.
+        canHost -> Triple(
+            "You can host across networks",
+            "Other devices can scan your QR and connect to you over the internet — your phone is acting as the server. No bootstrap needed.",
             NeoLime
         )
-        "private" -> Triple(
-            "Behind NAT",
-            "On the same Wi-Fi this works directly. Over the internet, the other device may need to scan a shared bootstrap instead.",
+        reachability == "public" && !hasWan -> Triple(
+            "Reachable — finding your address…",
+            "Your network looks open. Neo is still resolving a public address to share. Try Refresh in a moment.",
+            NeoLime
+        )
+        reachability == "private" -> Triple(
+            "Behind NAT — same Wi-Fi only",
+            "On the same Wi-Fi, others can scan your QR and connect directly. Across the internet your phone can't accept incoming connections — scan a reachable peer's QR, or scan a bootstrap someone runs.",
             TextWhite60
         )
         else -> Triple(

@@ -315,14 +315,16 @@ class GoLibP2pNode(
                 }
                 "connect_info" -> {
                     val peerId = obj.optString("peerID")
-                    val addrs = obj.optString("addrs")
-                        .split(",")
-                        .map { it.trim() }
-                        .filter { it.isNotEmpty() }
+                    fun parseList(key: String) = obj.optString(key)
+                        .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                    val addrs = parseList("addrs")
+                    val lan = parseList("lanAddrs")
+                    val wan = parseList("wanAddrs")
+                    val canHost = obj.optBoolean("canHost", false)
                     val status = obj.optString("status", _reachability.value)
                     if (status.isNotEmpty()) _reachability.value = status
                     if (peerId.isNotEmpty()) {
-                        _connectInfo.value = ConnectInfo(peerId, addrs)
+                        _connectInfo.value = ConnectInfo(peerId, addrs, lan, wan, canHost)
                     }
                 }
                 "peers" -> { }
@@ -511,8 +513,18 @@ class GoLibP2pNode(
  */
 data class ConnectInfo(
     val peerId: String,
-    val multiaddrs: List<String>
+    val multiaddrs: List<String>,
+    val lanAddrs: List<String> = emptyList(),
+    val wanAddrs: List<String> = emptyList(),
+    /** True when this node is reachable enough to host peers across networks. */
+    val canHost: Boolean = false
 ) {
     /** The single best multiaddr to advertise (already suffixed with /p2p/<id>). */
     val primaryMultiaddr: String? get() = multiaddrs.firstOrNull()
+
+    /** Best cross-network address if we can host, else null. */
+    val wanMultiaddr: String? get() = wanAddrs.firstOrNull()
+
+    /** Best same-Wi-Fi address. */
+    val lanMultiaddr: String? get() = lanAddrs.firstOrNull()
 }

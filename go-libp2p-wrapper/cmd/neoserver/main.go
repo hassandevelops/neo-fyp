@@ -64,7 +64,10 @@ type Event struct {
 	Addrs   string `json:"addrs,omitempty"`
 	Count   int    `json:"count"`
 	Error   string `json:"error,omitempty"`
-	Status  string `json:"status,omitempty"` // AutoNAT reachability: public|private|unknown
+	Status  string `json:"status,omitempty"`    // AutoNAT reachability: public|private|unknown
+	LanAddrs string `json:"lanAddrs,omitempty"`  // comma-sep LAN multiaddrs (same-Wi-Fi)
+	WanAddrs string `json:"wanAddrs,omitempty"`  // comma-sep public/relay multiaddrs (cross-network)
+	CanHost bool   `json:"canHost,omitempty"`    // true if this node is reachable enough to host peers
 }
 
 // -------- Bootstrap peers --------
@@ -181,6 +184,28 @@ func (n *Libp2pNode) sendEvent(evt Event) {
 	if n.eventWriter != nil {
 		n.eventWriter(evt)
 	}
+}
+
+// isPrivateAddr reports whether a multiaddr string is a LAN/private/loopback
+// address (only reachable on the same network) vs a public, internet-routable
+// one. Used to decide which address to advertise in the Connect-to-me QR.
+func isPrivateAddr(s string) bool {
+	host := ""
+	if a, err := ma.NewMultiaddr(s); err == nil {
+		if v, err := a.ValueForProtocol(ma.P_IP4); err == nil {
+			host = v
+		} else if v, err := a.ValueForProtocol(ma.P_IP6); err == nil {
+			host = v
+		}
+	}
+	if host == "" {
+		return true // can't tell → treat as non-shareable-public
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return true
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
 }
 
 // HandlePeerFound is called by mDNS when a peer on the LAN is discovered
@@ -1356,27 +1381,66 @@ func handleConnection(conn net.Conn) {
 			sendEvent(Event{Event: "peer_id", PeerID: node.host.ID().String()})
 
 		case "connect_info":
-			// Return this node's shareable identity for the "Connect to me" QR:
-			// peer ID, dialable (non-loopback) multiaddrs, and current reachability.
+			// Return this node's shareable identity for the "Connect to me" QR,
+			// split into LAN (same-Wi-Fi) and WAN (cross-network) addresses so the
+			// app can advertise the right one and tell the user whether they can
+			// actually host peers across networks.
 			if node == nil {
 				sendEvent(Event{Event: "error", Error: "not initialized"})
 				continue
 			}
-			shareable := make([]string, 0)
-			for _, a := range node.listenAddresses() {
-				if strings.Contains(a, "/ip4/127.0.0.1") || strings.Contains(a, "/ip6/::1") {
-					continue
+			pidStr := node.host.ID().String()
+			lan := make([]string, 0)
+			wan := make([]string, 0)
+			// host.Addrs() includes observed/relay addrs discovered via AutoNAT
+			// and circuit reservations, not just our own listeners.
+			seen := map[string]bool{}
+			collect := func(s string) {
+				if s == "" || seen[s] {
+					return
 				}
-				shareable = append(shareable, a)
+				seen[s] = true
+				if strings.Contains(s, "/p2p-circuit") {
+					wan = append(wan, s) // relay address: usable cross-network
+					return
+				}
+				if strings.Contains(s, "/ip4/127.0.0.1") || strings.Contains(s, "/ip6/::1") {
+					return
+				}
+				if isPrivateAddr(s) {
+					lan = append(lan, s)
+				} else {
+					wan = append(wan, s)
+				}
+			}
+			for _, a := range node.listenAddresses() {
+				collect(a)
+			}
+			for _, a := range node.host.Addrs() {
+				s := a.String()
+				if !strings.Contains(s, "/p2p/") {
+					s += "/p2p/" + pidStr
+				}
+				collect(s)
 			}
 			node.lock.RLock()
 			status := reachabilityString(node.reachability)
 			node.lock.RUnlock()
+			// We can host peers across networks if we have a public or relay addr.
+			canHost := len(wan) > 0 && status == "public"
+			// Best single address to advertise: prefer WAN when hostable, else LAN.
+			best := lan
+			if canHost {
+				best = append(append([]string{}, wan...), lan...)
+			}
 			sendEvent(Event{
-				Event:  "connect_info",
-				PeerID: node.host.ID().String(),
-				Addrs:  strings.Join(shareable, ","),
-				Status: status,
+				Event:    "connect_info",
+				PeerID:   pidStr,
+				Addrs:    strings.Join(best, ","),
+				LanAddrs: strings.Join(lan, ","),
+				WanAddrs: strings.Join(wan, ","),
+				Status:   status,
+				CanHost:  canHost,
 			})
 
 		case "stop":
