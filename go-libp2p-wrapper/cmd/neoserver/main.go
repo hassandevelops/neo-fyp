@@ -1088,10 +1088,11 @@ func (n *Libp2pNode) discoveryLoop() {
 						s.Close()
 						return
 					}
-					log.Printf("proxy: opened tunnel to %s via bootstrap, servicing as gossip", pid)
-					// Service the proxied stream as a real gossip session: registers
-					// activeStreams[pid], emits peer_connected, and pumps inbound lines to
-					// the app so posts traverse the tunnel both ways. Blocks until close.
+					log.Printf("proxy: opened outbound send-tunnel to %s via bootstrap", pid)
+					// Register as the OUTBOUND send-tunnel to pid; we only SEND on it. The
+					// peer's posts arrive on the peer's OWN outbound tunnel (an inbound stream
+					// serviced read-only). The reverse-read here yields nothing but usefully
+					// detects close so the discovery loop re-dials. Blocks until close.
 					n.serviceStreamFor(pid.String(), s)
 				}(pi.ID)
 			}

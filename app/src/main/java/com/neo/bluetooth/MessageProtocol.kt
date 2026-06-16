@@ -26,6 +26,8 @@ object MessageProtocol {
             subclass(Message.CommentBroadcast::class)
             subclass(Message.ReactionBroadcast::class)
             subclass(Message.PeerExchange::class)
+            subclass(Message.ProfileBroadcast::class)
+            subclass(Message.FollowBroadcast::class)
         }
     }
 
