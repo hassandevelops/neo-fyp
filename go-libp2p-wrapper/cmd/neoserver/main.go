@@ -570,6 +570,11 @@ func newNode(ctx context.Context, privKeyBytes []byte, port int) (*Libp2pNode, e
 		// and answer reachability probes for other Neo peers. This is what drives
 		// the "super-peer" role detection surfaced in the app.
 		libp2p.EnableNATService(),
+		// AutoRelay against the USER'S OWN bootstrap(s) — not public IPFS. The
+		// peer source yields whatever bootstrap the user configured, so a NAT'd
+		// phone reserves a relay slot there and becomes dialable via /p2p-circuit.
+		// This is what lets two NAT'd phones sync through a self-hosted bootstrap.
+		libp2p.EnableAutoRelayWithPeerSource(autoRelayPeerSource),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("new host: %w", err)
@@ -1166,6 +1171,30 @@ func (n *Libp2pNode) stop() {
 	}
 	n.dht.Close()
 	n.host.Close()
+}
+
+// autoRelayPeerSource feeds AutoRelay with the user's configured bootstrap
+// peers as relay candidates. AutoRelay calls this when it needs relays; we
+// yield the current bootstrap list (which honors the QR/set_bootstrap override),
+// so the phone reserves a circuit slot on the user's own bootstrap — never on
+// public IPFS infrastructure.
+func autoRelayPeerSource(ctx context.Context, num int) <-chan peer.AddrInfo {
+	out := make(chan peer.AddrInfo, num)
+	go func() {
+		defer close(out)
+		for _, pi := range parseBootstrapPeers() {
+			if num <= 0 {
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case out <- pi:
+				num--
+			}
+		}
+	}()
+	return out
 }
 
 func parseBootstrapPeers() []peer.AddrInfo {

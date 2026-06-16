@@ -124,6 +124,15 @@ func main() {
 	lanIP := getOutboundIP()
 	log.Printf("detected LAN IP: %s", lanIP)
 
+	// Publicly reachable relay base, e.g. "/ip4/159.223.110.159/tcp/52804" or
+	// "/dns4/bore.pub/tcp/52804". Set this when the bootstrap is behind a tunnel
+	// or NAT so the relay addresses handed to peers are actually dialable. When
+	// unset, falls back to the detected LAN IP on the listen port (LAN-only).
+	publicRelayBase := os.Getenv("NEO_PUBLIC_ADDR")
+	if publicRelayBase != "" {
+		log.Printf("using public relay base: %s", publicRelayBase)
+	}
+
 	// Peer exchange: relay announcements between connected peers
 	var (
 		pxMu     sync.Mutex
@@ -161,11 +170,21 @@ func main() {
 				// Add relay address for the target to reach the announcing peer
 				relayAddrs := make([]string, len(ann.Addrs))
 				copy(relayAddrs, ann.Addrs)
-				relayIP := lanIP
-				if relayIP == "" {
-					relayIP = "127.0.0.1"
+				// Build a circuit-relay address that points at how peers actually
+				// reach THIS bootstrap. Prefer the configured public base (tunnel/
+				// public IP); fall back to LAN IP on the listen port.
+				relayBase := publicRelayBase
+				if relayBase == "" {
+					relayIP := lanIP
+					if relayIP == "" {
+						relayIP = "127.0.0.1"
+					}
+					relayBase = fmt.Sprintf("/ip4/%s/tcp/%d", relayIP, port)
 				}
-				relayAddr := fmt.Sprintf("/ip4/%s/tcp/4001/p2p-circuit/p2p/%s", relayIP, pid.String())
+				// Format: <relay-base>/p2p/<BOOTSTRAP_ID>/p2p-circuit/p2p/<DEST_PEER_ID>
+				// base → how to reach the relay (this bootstrap); then the relay's
+				// own peer id; then the circuit hop to the announcing peer.
+				relayAddr := fmt.Sprintf("%s/p2p/%s/p2p-circuit/p2p/%s", relayBase, host.ID().String(), ann.PeerID)
 				relayAddrs = append(relayAddrs, relayAddr)
 				relayAnn := PeerAnnounce{PeerID: ann.PeerID, Addrs: relayAddrs}
 				if err := json.NewEncoder(s).Encode(relayAnn); err != nil {
