@@ -60,6 +60,27 @@ class UserPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_BOOTSTRAP_ENABLED, false)
         set(value) = prefs.edit { putBoolean(KEY_BOOTSTRAP_ENABLED, value) }
 
+    /**
+     * Observe changes to the bootstrap override. Invokes [onChange] with the new
+     * multiaddr whenever it is set/changed (and enabled), so the running libp2p
+     * node can apply it live — e.g. right after a QR scan — without a restart.
+     * Returns the listener so the caller can unregister it.
+     */
+    fun observeBootstrap(onChange: (String) -> Unit): SharedPreferences.OnSharedPreferenceChangeListener {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == KEY_BOOTSTRAP_MULTIADDR || key == KEY_BOOTSTRAP_ENABLED) {
+                val addr = bootstrapMultiaddr
+                if (bootstrapEnabled && !addr.isNullOrBlank()) onChange(addr)
+            }
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        return listener
+    }
+
+    fun unregisterListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
+        prefs.unregisterOnSharedPreferenceChangeListener(listener)
+    }
+
     fun resetToDefaults() {
         prefs.edit {
             putString(KEY_USER_NAME, DEFAULT_USER_NAME)

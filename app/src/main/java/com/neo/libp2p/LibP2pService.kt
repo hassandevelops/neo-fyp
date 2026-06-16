@@ -37,6 +37,7 @@ class LibP2pService : Service(), TransportPort {
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private lateinit var libP2pNode: LibP2pNode
+    private var bootstrapPrefListener: android.content.SharedPreferences.OnSharedPreferenceChangeListener? = null
 
     // Expose TransportPort-compatible properties
     override val connectedPeers: StateFlow<List<String>> get() = libP2pNode.connectedPeers
@@ -74,6 +75,15 @@ class LibP2pService : Service(), TransportPort {
         startForeground(NOTIFICATION_ID, createNotification())
         libP2pNode.start()
         Log.d(TAG, "LibP2p node started")
+        // Apply bootstrap-override changes LIVE (e.g. right after a QR scan or a
+        // deep link) so the running node dials the new bootstrap without a
+        // restart. Any code path that updates the pref triggers this.
+        if (bootstrapPrefListener == null) {
+            bootstrapPrefListener = userPreferences.observeBootstrap { addr ->
+                Log.i(TAG, "Bootstrap override changed, applying live: $addr")
+                libP2pNode.setBootstrap(addr)
+            }
+        }
         return START_STICKY
     }
 
@@ -81,6 +91,8 @@ class LibP2pService : Service(), TransportPort {
 
     override fun onDestroy() {
         super.onDestroy()
+        bootstrapPrefListener?.let { userPreferences.unregisterListener(it) }
+        bootstrapPrefListener = null
         libP2pNode.stop()
         serviceScope.cancel()
         Log.d(TAG, "LibP2pService destroyed")

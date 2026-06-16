@@ -16,7 +16,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.google.zxing.integration.android.IntentIntegrator
-import com.journeyapps.barcodescanner.CaptureActivity
 import com.neo.data.preferences.UserPreferences
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -70,10 +69,10 @@ class QrScanActivity : ComponentActivity() {
 
     private fun launchScanner() {
         val integrator = IntentIntegrator(this)
-        integrator.setOrientationLocked(false)
+        integrator.setOrientationLocked(true)
         integrator.setBeepEnabled(false)
         integrator.setBarcodeImageEnabled(false)
-        integrator.captureActivity = CaptureActivity::class.java
+        integrator.captureActivity = PortraitCaptureActivity::class.java
         integrator.setPrompt("Scan a Neo bootstrap QR code")
         scanLauncher.launch(integrator.createScanIntent())
     }

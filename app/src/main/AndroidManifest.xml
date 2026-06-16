@@ -103,6 +103,15 @@
             android:enabled="true"
             android:exported="false"
             android:theme="@style/Theme.App.Starting" />
+
+        <!-- Portrait-locked QR capture activity (default ZXing capture is landscape) -->
+        <activity
+            android:name=".ui.screens.settings.PortraitCaptureActivity"
+            android:screenOrientation="portrait"
+            android:stateNotNeeded="true"
+            android:theme="@style/zxing_CaptureTheme"
+            android:exported="false" />
+
         
         <!-- FileProvider for sharing images -->
         <provider
