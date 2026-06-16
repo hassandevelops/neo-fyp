@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -203,9 +204,21 @@ func main() {
 	// before closing the streams.
 	host.SetStreamHandler(ProxyProtocol, func(s network.Stream) {
 		log.Printf("proxy: handler entered, remote=%s", s.Conn().RemotePeer())
+		// Read the header as a single newline-terminated line (the initiator
+		// sends it via json.Encode, which appends '\n'). We must FORWARD this
+		// header verbatim to the target so the destination phone knows the
+		// original src and treats the tunnel as a gossip session — not consume
+		// it. Any gossip bytes that arrived with the header stay in `buffered`.
+		buffered := bufio.NewReader(s)
+		headerLine, err := buffered.ReadString('\n')
+		if err != nil && headerLine == "" {
+			log.Printf("proxy: read header: %v", err)
+			s.Close()
+			return
+		}
 		var msg map[string]interface{}
-		if err := json.NewDecoder(s).Decode(&msg); err != nil {
-			log.Printf("proxy: decode error: %v", err)
+		if jerr := json.Unmarshal([]byte(strings.TrimSpace(headerLine)), &msg); jerr != nil {
+			log.Printf("proxy: header decode error: %v", jerr)
 			s.Close()
 			return
 		}
@@ -232,15 +245,24 @@ func main() {
 			s.Close()
 			return
 		}
-		log.Printf("proxy: connected to target %s, starting relay", target)
+		// Forward the header line to the target FIRST, then relay the rest.
+		if _, werr := targetStream.Write([]byte(strings.TrimSpace(headerLine) + "\n")); werr != nil {
+			log.Printf("proxy: forward header: %v", werr)
+			s.Close()
+			targetStream.Close()
+			return
+		}
+		log.Printf("proxy: connected to target %s, relaying (header forwarded)", target)
 
 		// Copy data bidirectionally. Use a wait group so we only close the
-		// streams once BOTH directions have finished.
+		// streams once BOTH directions have finished. Read the src->target
+		// direction from `buffered` so any bytes pulled in with the header
+		// are not lost.
 		var wg sync.WaitGroup
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			io.Copy(targetStream, s)
+			io.Copy(targetStream, buffered)
 		}()
 		go func() {
 			defer wg.Done()

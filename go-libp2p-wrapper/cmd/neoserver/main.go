@@ -154,6 +154,8 @@ type Libp2pNode struct {
 	eventWriter   func(Event)
 	activeStreams map[string]network.Stream
 	lock          sync.RWMutex
+	dialing       map[string]bool // peers with an in-flight connect attempt
+	dialMu        sync.Mutex
 	bootPeerIDs   []peer.ID  // all connected bootstrap peers (both public and custom)
 	customBootIDs []peer.ID  // subset that support /neo/px/1.0.0 and /neo/proxy/1.0.0
 	customBootMu  sync.Mutex // guards customBootIDs
@@ -232,27 +234,49 @@ func (n *Libp2pNode) HandlePeerFound(pi peer.AddrInfo) {
 
 func (n *Libp2pNode) handleProxyStream(s network.Stream) {
 	log.Printf("proxy: handler entered, remote=%s", s.Conn().RemotePeer())
+	// The header is a single newline-terminated JSON object (the initiator uses
+	// json.Encode, which appends '\n'). Read exactly that line so any gossip
+	// bytes that follow stay buffered for the destination path.
+	buffered := bufio.NewReader(s)
+	headerLine, err := buffered.ReadString('\n')
+	if err != nil && headerLine == "" {
+		log.Printf("proxy: read header: %v", err)
+		s.Close()
+		return
+	}
 	var msg map[string]interface{}
-	if err := json.NewDecoder(s).Decode(&msg); err != nil {
-		log.Printf("proxy: decode error: %v", err)
+	if jerr := json.Unmarshal([]byte(strings.TrimSpace(headerLine)), &msg); jerr != nil {
+		log.Printf("proxy: header decode error: %v", jerr)
 		s.Close()
 		return
 	}
-	targetStr, ok := msg["target"].(string)
-	if !ok {
-		log.Printf("proxy: missing target")
-		s.Close()
+
+	targetStr, _ := msg["target"].(string)
+	srcStr, _ := msg["src"].(string)
+
+	// FINAL DESTINATION: target is us (or unset/legacy). Service the tunnel as a
+	// gossip session under the SOURCE peer id so posts reach the app and replies
+	// flow back over the same tunnel. This is the fix that lets posts traverse a
+	// bootstrap-relayed connection.
+	if targetStr == "" || targetStr == n.host.ID().String() {
+		peerID := srcStr
+		if peerID == "" {
+			peerID = s.Conn().RemotePeer().String()
+		}
+		log.Printf("proxy: destination reached, servicing tunnel as gossip from %s", peerID)
+		n.serviceProxyTunnel(peerID, s, buffered)
 		return
 	}
+
+	// RELAY: forward to the target, re-sending the header so the target learns
+	// the original src. (A phone can relay too, though normally the bootstrap does.)
 	target, err := peer.Decode(targetStr)
 	if err != nil {
 		log.Printf("proxy: invalid target: %v", err)
 		s.Close()
 		return
 	}
-
 	ctx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
-	log.Printf("proxy: dialing target=%s", target)
 	targetStream, err := n.host.NewStream(ctx, target, protocol.ID("/neo/proxy/1.0.0"))
 	cancel()
 	if err != nil {
@@ -260,21 +284,56 @@ func (n *Libp2pNode) handleProxyStream(s network.Stream) {
 		s.Close()
 		return
 	}
-	log.Printf("proxy: connected to target %s, starting relay", target)
-
+	hdr, _ := json.Marshal(msg)
+	targetStream.Write(append(hdr, '\n'))
+	log.Printf("proxy: relaying to target %s", target)
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		io.Copy(targetStream, s)
-	}()
-	go func() {
-		defer wg.Done()
-		io.Copy(s, targetStream)
-	}()
+	go func() { defer wg.Done(); io.Copy(targetStream, buffered) }()
+	go func() { defer wg.Done(); io.Copy(s, targetStream) }()
 	wg.Wait()
 	s.Close()
 	targetStream.Close()
+}
+
+// serviceProxyTunnel services a proxied stream as a gossip session: emits
+// peer_connected for peerID, forwards inbound lines (from the buffered reader,
+// which may already hold gossip bytes pulled in with the header) as message
+// events, and registers the stream so sendMessage replies over the same tunnel.
+func (n *Libp2pNode) serviceProxyTunnel(peerID string, s network.Stream, buffered *bufio.Reader) {
+	defer s.Close()
+	defer func() {
+		n.lock.Lock()
+		if n.activeStreams[peerID] == s {
+			delete(n.activeStreams, peerID)
+		}
+		n.lock.Unlock()
+		n.sendEvent(Event{Event: "peer_disconnected", PeerID: peerID})
+	}()
+
+	n.lock.Lock()
+	if existing, exists := n.activeStreams[peerID]; exists && existing != s {
+		existing.Close()
+	}
+	n.activeStreams[peerID] = s
+	n.lock.Unlock()
+
+	n.sendEvent(Event{Event: "peer_connected", PeerID: peerID})
+
+	for {
+		line, err := buffered.ReadString('\n')
+		if err != nil {
+			if err != io.EOF {
+				log.Printf("proxy tunnel read error from %s: %v", peerID, err)
+			}
+			break
+		}
+		line = strings.TrimSuffix(line, "\n")
+		if len(line) == 0 {
+			continue
+		}
+		n.sendEvent(Event{Event: "message", PeerID: peerID, Message: line})
+	}
 }
 
 func (n *Libp2pNode) sendMessage(peerID string, message string) error {
@@ -303,8 +362,40 @@ func (n *Libp2pNode) handleStream(s network.Stream) {
 // the stream closes. Used for BOTH inbound streams (handleStream) and the
 // outbound stream opened by promoteBootstrapToPeer — without a reader loop an
 // outbound stream is never serviced and sendMessage writes silently fail.
+// tryBeginDial returns true if no connection attempt is already in flight for
+// peerID and no active stream exists. It marks the peer as dialing. Prevents
+// the discovery loop from racing multiple concurrent tunnels to the same peer
+// (which flap and leave connectedPeers momentarily empty). Call endDial when done.
+func (n *Libp2pNode) tryBeginDial(peerID string) bool {
+	n.lock.RLock()
+	_, hasStream := n.activeStreams[peerID]
+	n.lock.RUnlock()
+	if hasStream {
+		return false
+	}
+	n.dialMu.Lock()
+	defer n.dialMu.Unlock()
+	if n.dialing[peerID] {
+		return false
+	}
+	n.dialing[peerID] = true
+	return true
+}
+
+func (n *Libp2pNode) endDial(peerID string) {
+	n.dialMu.Lock()
+	delete(n.dialing, peerID)
+	n.dialMu.Unlock()
+}
+
 func (n *Libp2pNode) serviceStream(s network.Stream) {
-	peerID := s.Conn().RemotePeer().String()
+	n.serviceStreamFor(s.Conn().RemotePeer().String(), s)
+}
+
+// serviceStreamFor is like serviceStream but uses an explicit peer id. This is
+// required for proxied/relayed tunnels, where s.Conn().RemotePeer() is the
+// relay (bootstrap), not the actual peer on the other end of the tunnel.
+func (n *Libp2pNode) serviceStreamFor(peerID string, s network.Stream) {
 	defer s.Close()
 	defer func() {
 		n.lock.Lock()
@@ -601,6 +692,7 @@ func newNode(ctx context.Context, privKeyBytes []byte, port int) (*Libp2pNode, e
 		ctx:           ctx,
 		port:          port,
 		activeStreams:  make(map[string]network.Stream),
+		dialing:        make(map[string]bool),
 		bootPeerIDs:    make([]peer.ID, 0),
 		customBootIDs:  make([]peer.ID, 0),
 		peerAddrs:      make(map[peer.ID][]string),
@@ -918,14 +1010,14 @@ func (n *Libp2pNode) discoveryLoop() {
 				if isBootstrap {
 					continue
 				}
-				n.lock.RLock()
-				_, already := n.activeStreams[pi.ID.String()]
-				n.lock.RUnlock()
-				if already {
+				// Single-flight guard: skip if already connected or a dial is in
+				// flight. Prevents racing duplicate tunnels that flap the peer.
+				if !n.tryBeginDial(pi.ID.String()) {
 					continue
 				}
 				// Try direct connect first (hole-punching + circuit relay), fall back to PX then proxy
 				go func(pid peer.ID) {
+					defer n.endDial(pid.String())
 					cctx, cancel := context.WithTimeout(n.ctx, 15*time.Second)
 					defer cancel()
 					err := n.host.Connect(cctx, peer.AddrInfo{ID: pid})
@@ -971,7 +1063,15 @@ func (n *Libp2pNode) discoveryLoop() {
 					} else {
 						log.Printf("discover: PX with %s failed: %v", pid, pxErr)
 					}
-					// Fall back to proxy through custom bootstrap
+					// Fall back to proxy through custom bootstrap.
+					// Tiebreaker: only the peer with the lexicographically smaller
+					// id initiates the proxy tunnel; the other waits to receive it.
+					// This prevents both peers opening a tunnel at once (which flap
+					// and leave connectedPeers momentarily empty, dropping posts).
+					if n.host.ID().String() >= pid.String() {
+						log.Printf("proxy: deferring to %s to initiate tunnel", pid)
+						return
+					}
 					n.customBootMu.Lock()
 					proxyID := peer.ID("")
 					if len(n.customBootIDs) > 0 {
@@ -988,25 +1088,20 @@ func (n *Libp2pNode) discoveryLoop() {
 						log.Printf("proxy: open stream: %v", pErr)
 						return
 					}
-					req := map[string]string{"target": pid.String()}
+					// Include our own id as src so the destination knows who is connecting
+					// and can emit peer_connected + reply over the same tunnel. The relay
+					// forwards this header verbatim to the destination.
+					req := map[string]string{"target": pid.String(), "src": n.host.ID().String()}
 					if err := json.NewEncoder(s).Encode(req); err != nil {
 						log.Printf("proxy: encode: %v", err)
 						s.Close()
 						return
 					}
-					n.lock.Lock()
-					n.activeStreams[pid.String()] = s
-					n.lock.Unlock()
-					log.Printf("proxy: sending peer_connected event for %s", pid.String())
-					n.sendEvent(Event{Event: "peer_connected", PeerID: pid.String()})
-					log.Printf("proxy: connected to %s via bootstrap", pid)
-					go func() {
-						<-n.ctx.Done()
-						n.lock.Lock()
-						delete(n.activeStreams, pid.String())
-						n.lock.Unlock()
-						s.Close()
-					}()
+					log.Printf("proxy: opened tunnel to %s via bootstrap, servicing as gossip", pid)
+					// Service the proxied stream as a real gossip session: registers
+					// activeStreams[pid], emits peer_connected, and pumps inbound lines to
+					// the app so posts traverse the tunnel both ways. Blocks until close.
+					n.serviceStreamFor(pid.String(), s)
 				}(pi.ID)
 			}
 		}
