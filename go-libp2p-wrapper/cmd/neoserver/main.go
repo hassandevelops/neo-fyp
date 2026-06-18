@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -28,12 +29,11 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/host/eventbus"
 	"github.com/libp2p/go-libp2p/p2p/host/routed"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
-	pubsub "github.com/libp2p/go-libp2p-pubsub"
 
 	"github.com/ipfs/go-cid"
-	dht "github.com/libp2p/go-libp2p-kad-dht"
 	ds "github.com/ipfs/go-datastore"
 	dsync "github.com/ipfs/go-datastore/sync"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
 	ma "github.com/multiformats/go-multiaddr"
 	"github.com/multiformats/go-multihash"
 )
@@ -57,24 +57,25 @@ type Command struct {
 }
 
 type Event struct {
-	Event   string `json:"event"`
-	PeerID  string `json:"peerID,omitempty"`
-	Message string `json:"message,omitempty"`
-	Topic   string `json:"topic,omitempty"`
-	Addrs   string `json:"addrs,omitempty"`
-	Count   int    `json:"count"`
-	Error   string `json:"error,omitempty"`
-	Status  string `json:"status,omitempty"`    // AutoNAT reachability: public|private|unknown
-	LanAddrs string `json:"lanAddrs,omitempty"`  // comma-sep LAN multiaddrs (same-Wi-Fi)
-	WanAddrs string `json:"wanAddrs,omitempty"`  // comma-sep public/relay multiaddrs (cross-network)
-	CanHost bool   `json:"canHost,omitempty"`    // true if this node is reachable enough to host peers
+	Event    string `json:"event"`
+	PeerID   string `json:"peerID,omitempty"`
+	Message  string `json:"message,omitempty"`
+	Topic    string `json:"topic,omitempty"`
+	Addrs    string `json:"addrs,omitempty"`
+	Count    int    `json:"count"`
+	Error    string `json:"error,omitempty"`
+	Status   string `json:"status,omitempty"`   // AutoNAT reachability: public|private|unknown
+	LanAddrs string `json:"lanAddrs,omitempty"` // comma-sep LAN multiaddrs (same-Wi-Fi)
+	WanAddrs string `json:"wanAddrs,omitempty"` // comma-sep public/relay multiaddrs (cross-network)
+	CanHost  bool   `json:"canHost,omitempty"`  // true if this node is reachable enough to host peers
 }
 
 // -------- Bootstrap peers --------
 // Configurable via:
-//   1. File: "bootstrap.conf" - one multiaddr per line
-//   2. Env: NEO_BOOTSTRAP - comma-separated multiaddrs
-//   3. Fallback: hardcoded default
+//  1. File: "bootstrap.conf" - one multiaddr per line
+//  2. Env: NEO_BOOTSTRAP - comma-separated multiaddrs
+//  3. Fallback: hardcoded default
+//
 // No public/default bootstrap peers. Neo does not touch public IPFS
 // infrastructure: same-Wi-Fi discovery is handled by mDNS/Android NSD, and
 // cross-network sync goes through a bootstrap the user runs and scans via QR
@@ -683,11 +684,11 @@ func newNode(ctx context.Context, privKeyBytes []byte, port int) (*Libp2pNode, e
 		dht:           kdht,
 		ctx:           ctx,
 		port:          port,
-		activeStreams:  make(map[string]network.Stream),
-		dialing:        make(map[string]bool),
-		bootPeerIDs:    make([]peer.ID, 0),
-		customBootIDs:  make([]peer.ID, 0),
-		peerAddrs:      make(map[peer.ID][]string),
+		activeStreams: make(map[string]network.Stream),
+		dialing:       make(map[string]bool),
+		bootPeerIDs:   make([]peer.ID, 0),
+		customBootIDs: make([]peer.ID, 0),
+		peerAddrs:     make(map[peer.ID][]string),
 	}
 
 	// Register stream handlers BEFORE connecting to bootstrap
@@ -883,6 +884,7 @@ func newNode(ctx context.Context, privKeyBytes []byte, port int) (*Libp2pNode, e
 
 	// Discovery loop
 	go node.discoveryLoop()
+	go node.reconnectLoop()
 
 	// Keepalive loop
 	go node.keepaliveLoop()
@@ -902,6 +904,167 @@ func neoDiscoveryCID() cid.Cid {
 }
 
 var discoveryCID = neoDiscoveryCID()
+
+func (n *Libp2pNode) dialAndServe(pid peer.ID) {
+	defer n.endDial(pid.String())
+	cctx, cancel := context.WithTimeout(n.ctx, 15*time.Second)
+	defer cancel()
+	err := n.host.Connect(cctx, peer.AddrInfo{ID: pid})
+	if err == nil {
+		log.Printf("discover: direct connected to %s", pid)
+		gCtx, gCancel := context.WithTimeout(n.ctx, 5*time.Second)
+		s, gErr := n.host.NewStream(gCtx, pid, protocol.ID(NeoProtocolID))
+		gCancel()
+		if gErr == nil {
+			// A DIRECT libp2p stream is bidirectional, so we MUST run a reader
+			// loop on it — otherwise the initiator sends posts but never
+			// RECEIVES the peer's, which is the one-directional LAN-sync bug.
+			// serviceStreamFor registers it, emits peer_connected, pumps inbound
+			// lines, and blocks until the stream closes.
+			n.serviceStreamFor(pid.String(), s)
+			return
+		}
+		n.sendEvent(Event{Event: "peer_connected", PeerID: pid.String()})
+		return
+	}
+	log.Printf("discover: direct connect to %s failed: %v", pid, err)
+	// Try PX directly with peer to exchange addresses (incl. relay)
+	pxCtx, pxCancel := context.WithTimeout(n.ctx, 10*time.Second)
+	pxStream, pxErr := n.host.NewStream(pxCtx, pid, protocol.ID("/neo/px/1.0.0"))
+	pxCancel()
+	if pxErr == nil {
+		log.Printf("discover: PX exchange with %s succeeded, retrying connect", pid)
+		pxStream.Close()
+		// Retry connect after PX may have updated peerstore with relay addresses
+		rctx, rcancel := context.WithTimeout(n.ctx, 15*time.Second)
+		rerr := n.host.Connect(rctx, peer.AddrInfo{ID: pid})
+		rcancel()
+		if rerr == nil {
+			log.Printf("discover: connected to %s after PX", pid)
+			rctx2, rcancel2 := context.WithTimeout(n.ctx, 5*time.Second)
+			s, gErr := n.host.NewStream(rctx2, pid, protocol.ID(NeoProtocolID))
+			rcancel2()
+			if gErr == nil {
+				// Bidirectional direct stream — service with a reader loop so
+				// sync works both ways (see direct-connect path above).
+				n.serviceStreamFor(pid.String(), s)
+				return
+			}
+			n.sendEvent(Event{Event: "peer_connected", PeerID: pid.String()})
+			return
+		}
+		log.Printf("discover: connect after PX to %s failed: %v", pid, rerr)
+	} else {
+		log.Printf("discover: PX with %s failed: %v", pid, pxErr)
+	}
+	// Fall back to proxy through custom bootstrap.
+	// BOTH peers open their OWN outbound send-tunnel (no tiebreaker):
+	// each direction is a separate forward-only relayed stream, because
+	// the reverse direction of a relayed stream does not deliver reads.
+	// I SEND on the tunnel I open (registered in activeStreams); I
+	// RECEIVE the peer's posts on the peer's own outbound tunnel, which
+	// arrives here as an inbound stream serviced read-only.
+	n.customBootMu.Lock()
+	proxyID := peer.ID("")
+	if len(n.customBootIDs) > 0 {
+		proxyID = n.customBootIDs[0]
+	}
+	n.customBootMu.Unlock()
+	if proxyID == "" {
+		return
+	}
+	pCtx, pCancel := context.WithTimeout(n.ctx, 30*time.Second)
+	defer pCancel()
+	s, pErr := n.host.NewStream(pCtx, proxyID, protocol.ID("/neo/proxy/1.0.0"))
+	if pErr != nil {
+		log.Printf("proxy: open stream: %v", pErr)
+		return
+	}
+	// Include our own id as src so the destination knows who is connecting
+	// and can emit peer_connected + reply over the same tunnel. The relay
+	// forwards this header verbatim to the destination.
+	req := map[string]string{"target": pid.String(), "src": n.host.ID().String()}
+	hdr, _ := json.Marshal(req)
+	if _, err := s.Write(append(hdr, '\n')); err != nil {
+		log.Printf("proxy: write header: %v", err)
+		s.Close()
+		return
+	}
+	log.Printf("proxy: opened outbound send-tunnel to %s via bootstrap", pid)
+	// Register as the OUTBOUND send-tunnel to pid; we only SEND on it. The
+	// peer's posts arrive on the peer's OWN outbound tunnel (an inbound stream
+	// serviced read-only). The reverse-read here yields nothing but usefully
+	// detects close so the discovery loop re-dials. Blocks until close.
+	n.serviceStreamFor(pid.String(), s)
+}
+
+// reconnectLoop closes the cross-network "30s gap": when a proxy send-tunnel
+// drops, the main discoveryLoop only re-dials on its next 30s DHT tick, so the
+// peer appears to flap offline for up to half a minute. This loop ticks every
+// few seconds over peers we already know (learned via PX / relayed
+// announcements) and immediately re-dials any that have no active stream — using
+// the SAME dialAndServe path as discovery, so steady-state behavior is
+// unchanged. tryBeginDial dedupes against in-flight dials and live tunnels, so a
+// healthy peer is never re-dialed; only a genuinely dropped one is.
+func (n *Libp2pNode) reconnectLoop() {
+	ticker := time.NewTicker(7 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-n.ctx.Done():
+			return
+		case <-ticker.C:
+			// Snapshot known peers + their cached addrs from the PX table.
+			n.pxMu.Lock()
+			known := make(map[peer.ID][]string, len(n.peerAddrs))
+			for pid, addrs := range n.peerAddrs {
+				known[pid] = addrs
+			}
+			n.pxMu.Unlock()
+
+			for pid, addrs := range known {
+				if pid == n.host.ID() {
+					continue
+				}
+				// Never treat a bootstrap/relay as a regular peer to proxy-dial.
+				isBoot := false
+				n.customBootMu.Lock()
+				for _, bp := range n.customBootIDs {
+					if bp == pid {
+						isBoot = true
+						break
+					}
+				}
+				n.customBootMu.Unlock()
+				if !isBoot {
+					for _, bp := range n.bootPeerIDs {
+						if bp == pid {
+							isBoot = true
+							break
+						}
+					}
+				}
+				if isBoot {
+					continue
+				}
+				// Only act on peers with no live send-tunnel / dial in flight.
+				if !n.tryBeginDial(pid.String()) {
+					continue
+				}
+				// Seed the peerstore with cached addrs so the direct-connect leg
+				// of dialAndServe has something to try before falling back to the
+				// bootstrap proxy.
+				for _, a := range addrs {
+					if maddr, err := ma.NewMultiaddr(a); err == nil {
+						n.host.Peerstore().AddAddr(pid, maddr, peerstore.TempAddrTTL)
+					}
+				}
+				log.Printf("reconnect: re-dialing dropped peer %s", pid)
+				go n.dialAndServe(pid)
+			}
+		}
+	}
+}
 
 func (n *Libp2pNode) discoveryLoop() {
 	// Announce our presence via DHT provider records
@@ -1008,93 +1171,7 @@ func (n *Libp2pNode) discoveryLoop() {
 					continue
 				}
 				// Try direct connect first (hole-punching + circuit relay), fall back to PX then proxy
-				go func(pid peer.ID) {
-					defer n.endDial(pid.String())
-					cctx, cancel := context.WithTimeout(n.ctx, 15*time.Second)
-					defer cancel()
-					err := n.host.Connect(cctx, peer.AddrInfo{ID: pid})
-					if err == nil {
-						log.Printf("discover: direct connected to %s", pid)
-						gCtx, gCancel := context.WithTimeout(n.ctx, 5*time.Second)
-						s, gErr := n.host.NewStream(gCtx, pid, protocol.ID(NeoProtocolID))
-						gCancel()
-						if gErr == nil {
-							n.lock.Lock()
-							n.activeStreams[pid.String()] = s
-							n.lock.Unlock()
-						}
-						n.sendEvent(Event{Event: "peer_connected", PeerID: pid.String()})
-						return
-					}
-					log.Printf("discover: direct connect to %s failed: %v", pid, err)
-					// Try PX directly with peer to exchange addresses (incl. relay)
-					pxCtx, pxCancel := context.WithTimeout(n.ctx, 10*time.Second)
-					pxStream, pxErr := n.host.NewStream(pxCtx, pid, protocol.ID("/neo/px/1.0.0"))
-					pxCancel()
-					if pxErr == nil {
-						log.Printf("discover: PX exchange with %s succeeded, retrying connect", pid)
-						pxStream.Close()
-						// Retry connect after PX may have updated peerstore with relay addresses
-						rctx, rcancel := context.WithTimeout(n.ctx, 15*time.Second)
-						rerr := n.host.Connect(rctx, peer.AddrInfo{ID: pid})
-						rcancel()
-						if rerr == nil {
-							log.Printf("discover: connected to %s after PX", pid)
-							rctx2, rcancel2 := context.WithTimeout(n.ctx, 5*time.Second)
-							s, gErr := n.host.NewStream(rctx2, pid, protocol.ID(NeoProtocolID))
-							rcancel2()
-							if gErr == nil {
-								n.lock.Lock()
-								n.activeStreams[pid.String()] = s
-								n.lock.Unlock()
-							}
-							n.sendEvent(Event{Event: "peer_connected", PeerID: pid.String()})
-							return
-						}
-						log.Printf("discover: connect after PX to %s failed: %v", pid, rerr)
-					} else {
-						log.Printf("discover: PX with %s failed: %v", pid, pxErr)
-					}
-					// Fall back to proxy through custom bootstrap.
-					// BOTH peers open their OWN outbound send-tunnel (no tiebreaker):
-					// each direction is a separate forward-only relayed stream, because
-					// the reverse direction of a relayed stream does not deliver reads.
-					// I SEND on the tunnel I open (registered in activeStreams); I
-					// RECEIVE the peer's posts on the peer's own outbound tunnel, which
-					// arrives here as an inbound stream serviced read-only.
-					n.customBootMu.Lock()
-					proxyID := peer.ID("")
-					if len(n.customBootIDs) > 0 {
-						proxyID = n.customBootIDs[0]
-					}
-					n.customBootMu.Unlock()
-					if proxyID == "" {
-						return
-					}
-					pCtx, pCancel := context.WithTimeout(n.ctx, 30*time.Second)
-					defer pCancel()
-					s, pErr := n.host.NewStream(pCtx, proxyID, protocol.ID("/neo/proxy/1.0.0"))
-					if pErr != nil {
-						log.Printf("proxy: open stream: %v", pErr)
-						return
-					}
-					// Include our own id as src so the destination knows who is connecting
-					// and can emit peer_connected + reply over the same tunnel. The relay
-					// forwards this header verbatim to the destination.
-					req := map[string]string{"target": pid.String(), "src": n.host.ID().String()}
-					hdr, _ := json.Marshal(req)
-					if _, err := s.Write(append(hdr, '\n')); err != nil {
-						log.Printf("proxy: write header: %v", err)
-						s.Close()
-						return
-					}
-					log.Printf("proxy: opened outbound send-tunnel to %s via bootstrap", pid)
-					// Register as the OUTBOUND send-tunnel to pid; we only SEND on it. The
-					// peer's posts arrive on the peer's OWN outbound tunnel (an inbound stream
-					// serviced read-only). The reverse-read here yields nothing but usefully
-					// detects close so the discovery loop re-dials. Blocks until close.
-					n.serviceStreamFor(pid.String(), s)
-				}(pi.ID)
+				go n.dialAndServe(pi.ID)
 			}
 		}
 	}

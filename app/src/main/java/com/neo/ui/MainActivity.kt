@@ -101,6 +101,17 @@ class MainActivity : ComponentActivity() {
                     ?.takeIf { it.startsWith("/") && it.contains("/p2p/") }
                     ?.let { binder.getService().setBootstrap(it) }
             }
+            // Register THIS phone on the LAN via NSD once its peer id is known,
+            // so other phones on the same Wi-Fi discover and dial it directly
+            // (serverless same-Wi-Fi sync, no bootstrap relay needed).
+            nsdRegisterJob?.cancel()
+            nsdRegisterJob = lifecycleScope.launch {
+                binder.getService().connectInfo.collect { info ->
+                    val pid = info?.peerId
+                    if (!pid.isNullOrBlank()) nsdDiscovery.register(pid)
+                }
+            }
+            binder.getService().requestConnectInfo()
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -111,6 +122,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private var nsdJob: kotlinx.coroutines.Job? = null
+    private var nsdRegisterJob: kotlinx.coroutines.Job? = null
 
     override fun onStart() {
         super.onStart()

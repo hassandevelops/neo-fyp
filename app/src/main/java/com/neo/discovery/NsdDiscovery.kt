@@ -39,7 +39,9 @@ class NsdDiscovery @Inject constructor(
 
     private var nsdManager: NsdManager? = null
     private var discoveryListener: NsdManager.DiscoveryListener? = null
+    private var registrationListener: NsdManager.RegistrationListener? = null
     private var multicastLock: WifiManager.MulticastLock? = null
+    private var ownPeerId: String? = null
 
     private val _discoveredMultiaddrs = MutableSharedFlow<String>(replay = 0, extraBufferCapacity = 32)
     val discoveredMultiaddrs: SharedFlow<String> = _discoveredMultiaddrs.asSharedFlow()
@@ -67,10 +69,46 @@ class NsdDiscovery @Inject constructor(
         startDiscovery(mgr)
     }
 
+    /**
+     * Register THIS phone's libp2p service on the LAN so other phones on the
+     * same Wi-Fi discover it via NSD and dial it directly — the piece that makes
+     * same-Wi-Fi sync work with no bootstrap/server. [peerId] is the libp2p peer
+     * id; [port] its LAN listen port (9876). Idempotent; re-registers on change.
+     */
+    fun register(peerId: String, port: Int = 9876) {
+        val mgr = nsdManager
+            ?: (context.getSystemService(Context.NSD_SERVICE) as? NsdManager)?.also { nsdManager = it }
+            ?: return
+        if (peerId.isBlank()) return
+        if (ownPeerId == peerId && registrationListener != null) return
+        ownPeerId = peerId
+        registrationListener?.let { runCatching { mgr.unregisterService(it) } }
+
+        val info = NsdServiceInfo().apply {
+            serviceName = "neo-${peerId.takeLast(6)}"
+            serviceType = SERVICE_TYPE
+            this.port = port
+            setAttribute("p2p", peerId)
+            setAttribute("v", PROTOCOL_VERSION)
+        }
+        val listener = object : NsdManager.RegistrationListener {
+            override fun onServiceRegistered(s: NsdServiceInfo) { Log.i(TAG, "NSD registered: ${s.serviceName} :$port") }
+            override fun onRegistrationFailed(s: NsdServiceInfo, errorCode: Int) { Log.w(TAG, "NSD register failed: $errorCode") }
+            override fun onServiceUnregistered(s: NsdServiceInfo) { Log.d(TAG, "NSD unregistered: ${s.serviceName}") }
+            override fun onUnregistrationFailed(s: NsdServiceInfo, errorCode: Int) { Log.w(TAG, "NSD unregister failed: $errorCode") }
+        }
+        registrationListener = listener
+        runCatching { mgr.registerService(info, NsdManager.PROTOCOL_DNS_SD, listener) }
+            .onFailure { Log.w(TAG, "NSD register threw", it) }
+    }
+
     fun stop() {
         val mgr = nsdManager ?: return
         discoveryListener?.let { runCatching { mgr.stopServiceDiscovery(it) } }
         discoveryListener = null
+        registrationListener?.let { runCatching { mgr.unregisterService(it) } }
+        registrationListener = null
+        ownPeerId = null
         try { multicastLock?.release() } catch (_: Exception) {}
         multicastLock = null
         nsdManager = null
@@ -117,6 +155,7 @@ class NsdDiscovery @Inject constructor(
                     Log.w(TAG, "NSD service ${serviceInfo.serviceName} has no p2p attr")
                     return
                 }
+                if (peerId == ownPeerId) return // skip our own advertised service
                 val host = serviceInfo.host?.hostAddress ?: return
                 val port = serviceInfo.port
                 val multiaddr = "/ip4/$host/tcp/$port/p2p/$peerId"
